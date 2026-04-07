@@ -139,8 +139,12 @@ help:
 	@printf '%s\n' ''
 	@printf '%s\n' 'Remote Vivado/FPGA: add REMOTE=user@host REMOTE_DIR=/path/to/FpgaDiff-playground.'
 
+# Keep XS/Nut difftest as symlinks to the top-level difftest; otherwise
+# their submodule init checks out the shared difftest to their gitlink commits.
 init:
 	git submodule update --init
+	git -C $(XS_HOME) config submodule.difftest.update none
+	git -C $(NUT_HOME) config submodule.difftest.update none
 	$(MAKE) -C $(XS_HOME) init
 	$(MAKE) -C $(NUT_HOME) init
 	$(MAKE) -C $(WORKLOAD_HOME) init
