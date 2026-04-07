@@ -1,67 +1,67 @@
 # FpgaDiff Playground
 
-这个仓库用于把 FPGA DiffTest 的常用流程串起来：
+This repository chains together the common FPGA DiffTest workflows:
 
 ```text
 XiangShan / NutShell Verilog
-  -> 顶层 difftest 生成 release / fpga-host
-  -> env-scripts/fpga_diff 生成 Vivado bitstream
-  -> NEMU 生成 reference so
-  -> workload-builder 编译 workload
-  -> Bin2ddr 生成 DDR txt
-  -> FPGA 上烧 bit、写 DDR、运行 fpga-host 协同仿真
+  -> top-level difftest generates release / fpga-host
+  -> env-scripts/fpga_diff generates Vivado bitstream
+  -> NEMU generates reference SO
+  -> workload-builder compiles workloads
+  -> Bin2ddr generates DDR txt
+  -> FPGA: write bitstream, write DDR, run fpga-host co-simulation
 ```
 
-完整可执行示例见 `docs/example.md`。DiffTest 细节可参考 `difftest/docs/`。
+See [`docs/`](docs/README.md) for detailed guides. For DiffTest internals, see [`difftest/docs/`](difftest/docs/README.md).
 
-## 产物目录
+## Output Directories
 
-顶层构建日志和 release 仍放在 `build/`，待运行输入放在顶层 `ready-to-run/`，待烧写的 bitstream bundle 放在顶层 `bitstream/`。这些目录都已加入 `.gitignore`：
+Build logs and releases go under `build/`, runtime inputs under `ready-to-run/`, bitstream bundles under `bitstream/`. All are gitignored:
 
-| 路径 | 内容 |
+| Path | Contents |
 | --- | --- |
-| `build/release/` | release tarball、解包后的 release、`latest-<design>.path`、`latest-<design>.name` |
-| `build/build-log/` | `verilog`、`release`、`host`、`bit`、`workload`、`nemu` 等构建阶段日志 |
-| `build/run-log/` | `run_host` 的运行日志，默认文件名带时间戳 |
-| `ready-to-run/<nemu-config>/` | `make nemu` 复制出的 `riscv64-nemu-interpreter-so` |
-| `ready-to-run/<target>/` | workload `.bin` 和 Bin2ddr 转出的 `.txt` |
-| `bitstream/<design>-<time>/` | 当前 bundle 的 `.bit/.ltx` 和使用的 release 解包目录 |
+| `build/release/` | Release tarballs, unpacked releases, `latest-<design>.path`, `latest-<design>.name` |
+| `build/build-log/` | Per-stage build logs: `verilog`, `release`, `host`, `bit`, `workload`, `nemu` |
+| `build/run-log/` | `run_host` runtime logs (timestamped filenames) |
+| `ready-to-run/<nemu-config>/` | `riscv64-nemu-interpreter-so` copied by `make nemu` |
+| `ready-to-run/<target>/` | Workload `.bin` and Bin2ddr `.txt` |
+| `bitstream/<design>-<time>/` | Bundle: `.bit/.ltx` and the release directory used for synthesis |
 
-`RELEASE_SUFFIX` 默认是当前时间 `HHMMSS`，用于避免同一天同配置 release 覆盖。需要隐藏 suffix 时可以显式传空值：
+`RELEASE_SUFFIX` defaults to `HHMMSS` to prevent same-day overwrites. To suppress the suffix:
 
 ```sh
 make release xiangshan RELEASE_SUFFIX=
 ```
 
-release 的实际路径由 `difftest/scripts/fpga/release.sh` 的日志输出解析得到，日志位于 `build/build-log/release-<design>-<time>.log`。`make release` 会把 release tarball 解到 `build/release/<release-name>`，并写入：
+The actual release path is parsed from `difftest/scripts/fpga/release.sh` output in `build/build-log/release-<design>-<time>.log`. `make release` unpacks the tarball to `build/release/<release-name>` and writes:
 
 ```text
 build/release/latest-xiangshan.path
 build/release/latest-xiangshan.name
 ```
 
-本机继续使用 release 时读 `.path`；同步到不共享 NFS 的上位机后，用 `.name` 拼远端路径更可靠。
+Use `.path` for local operations; use `.name` to construct paths on remote hosts that do not share NFS.
 
-## 初始化
+## Initialization
 
 ```sh
 make init
 ```
 
-`init` 会执行顶层 submodule init、各子模块自己的 `make init`，并执行 `make -C Bin2ddr FPGA=1`。
+`init` runs top-level submodule init, each submodule's own `make init`, and `make -C Bin2ddr FPGA=1`.
 
-`link_difftest` 会让 `XiangShan/difftest` 和 `NutShell/difftest` 指向顶层 `difftest`，并已包含在 `make init` 里。它不修改 XS/NutShell 的 `.gitmodules`，所以不影响后续 pull 更新；如果内部 difftest 有本地修改，会拒绝替换。
+`link_difftest` (included in `make init`) makes `XiangShan/difftest` and `NutShell/difftest` point to the top-level `difftest`. It does not modify `.gitmodules`, so it does not interfere with future pulls. If the internal difftest has local modifications, the link is refused.
 
 ## Verilog / Release / Host
 
-设计不再有默认值，必须显式传入：
+The design must be specified explicitly:
 
 ```sh
 make verilog xiangshan
 make verilog nutshell
 ```
 
-香山常用流程：
+Typical XiangShan flow:
 
 ```sh
 make clean xiangshan
@@ -71,9 +71,9 @@ XS_RELEASE=$(cat build/release/latest-xiangshan.path)
 make host xiangshan FPGA_HOST_HOME=$XS_RELEASE
 ```
 
-这些构建阶段的日志会写到 `build/build-log/`。
+Build logs are written to `build/build-log/`.
 
-NutShell 常用流程：
+Typical NutShell flow:
 
 ```sh
 make clean nutshell
@@ -83,17 +83,17 @@ NUT_RELEASE=$(cat build/release/latest-nutshell.path)
 make host nutshell FPGA_HOST_HOME=$NUT_RELEASE
 ```
 
-`host` 只面向 release 目录运行，因此需要显式传 `FPGA_HOST_HOME=<release-root>`。无论 XiangShan 还是 NutShell，默认参数都是 `RELEASE=1 FPGA=1 DIFFTEST_PERFCNT=1`。
+`host` operates against a release directory, so `FPGA_HOST_HOME=<release-root>` is required. Both XiangShan and NutShell default to `RELEASE=1 FPGA=1 DIFFTEST_PERFCNT=1`.
 
 ## Vivado Bitstream
 
-`bit` 是唯一的顶层 Vivado 生成入口，内部会执行 `env-scripts/fpga_diff` 的 `all` 和 `bitstream`，然后把 `.bit/.ltx` 和本次使用的 release 目录收集到 `bitstream/<design>-<time>/`：
+`bit` is the single top-level Vivado entry point. It runs `env-scripts/fpga_diff`'s `all` and `bitstream` targets, then collects `.bit/.ltx` and the release into `bitstream/<design>-<time>/`:
 
 ```sh
 make bit xiangshan
 ```
 
-Vivado 可放到远端执行，例如 `open103`：
+Vivado can run on a remote host:
 
 ```sh
 make bit \
@@ -102,17 +102,17 @@ make bit \
   REMOTE_DIR=/nfs/home/youkunlin/workspace/FpgaDiff-playground
 ```
 
-`open103` 的 Vivado 环境若已配置好，不需要额外传 `REMOTE_ENV`。
+If the Vivado environment is already configured on `open103`, `REMOTE_ENV` is not needed.
 
-Vivado 生成日志也会写到远端仓库的 `build/build-log/`，如果 `REMOTE_DIR` 在共享 NFS 上，本机可以直接查看。
+The Vivado log is also written to the repository's `build/build-log/`. If `REMOTE_DIR` is on shared NFS, the log is directly visible locally.
 
-默认会使用 `build/release/latest-<design>.path` 指向的 release，`CORE_DIR` 也固定为该 release 下的 `build/`。需要指定其他 release 时传：
+By default, the release pointed to by `build/release/latest-<design>.path` is used, and `CORE_DIR` is set to that release's `build/`. To override:
 
 ```sh
 make bit xiangshan BIT_SRC_DIR=/path/to/release
 ```
 
-生成后的 bundle 形如：
+The output bundle looks like:
 
 ```text
 bitstream/xiangshan-YYYYmmdd-HHMMSS/
@@ -123,31 +123,31 @@ bitstream/xiangshan-YYYYmmdd-HHMMSS/*.ltx
 
 ## NEMU Reference
 
-`nemu` 会在 `NEMU/` 里先执行 defconfig，再执行并行编译，最后把 reference so 复制到顶层 `ready-to-run/<NEMU_CONFIG>/`：
+`nemu` runs defconfig in `NEMU/`, compiles in parallel, and copies the reference SO to `ready-to-run/<NEMU_CONFIG>/`:
 
 ```sh
 make nemu
 ```
 
-默认配置是：
+Default config:
 
 ```text
 riscv64-xs-ref-novec-nopmppma_defconfig
 ```
 
-切换配置时传 `NEMU_CONFIG`：
+To switch configs:
 
 ```sh
 make nemu NEMU_CONFIG=riscv64-nutshell-ref_defconfig
 ```
 
-默认输出：
+Default output:
 
 ```text
 ready-to-run/riscv64-xs-ref-novec-nopmppma_defconfig/riscv64-nemu-interpreter-so
 ```
 
-日志会写到：
+Log:
 
 ```text
 build/build-log/nemu-<NEMU_CONFIG>-YYYYmmdd-HHMMSS.log
@@ -155,24 +155,26 @@ build/build-log/nemu-<NEMU_CONFIG>-YYYYmmdd-HHMMSS.log
 
 ## Workload
 
-`workload` 会编译程序，并把 `.bin` 和 `.txt` 都放到顶层 `ready-to-run/<target>/`：
+`workload` compiles the program and places both `.bin` and `.txt` under `ready-to-run/<target>/`:
 
 ```sh
 make workload TARGET=linux/hello
 ```
 
-默认输出：
+Default output:
 
 ```text
 ready-to-run/linux-hello/linux-hello.bin
 ready-to-run/linux-hello/linux-hello.txt
 ```
 
-`TARGET` 会原样传给 `workload-builder`，例如 `linux/hello` 或 `am/<name>`。AM workload 默认取 `package/bin/` 下排序后的第一个 `.bin`。
+`TARGET` is passed directly to `workload-builder`, e.g., `linux/hello` or `am/<name>`. AM workloads default to the first `.bin` (sorted) under `package/bin/`.
 
-## 复制到 FPGA 上位机
+See [`docs/workload.md`](docs/workload.md) for UART, device tree, and interrupt configuration.
 
-如果上位机 `fpga` 不共享 NFS，直接把要测试的 bundle 和顶层 `ready-to-run/` 复制到远端固定路径：
+## Sync to FPGA Host
+
+If the FPGA host `fpga` does not share NFS, copy the bundle and `ready-to-run/` to a fixed remote path:
 
 ```sh
 REMOTE_ROOT=/home/youkunlin/FpgaDiff-playground
@@ -185,7 +187,7 @@ rsync -a --delete \
 rsync -a --delete ready-to-run/ fpga:$REMOTE_ROOT/ready-to-run/
 ```
 
-同步后远端关键路径为：
+Key remote paths after sync:
 
 ```text
 /home/youkunlin/FpgaDiff-playground/bitstream/<bundle-name>/<release-name>
@@ -195,9 +197,9 @@ rsync -a --delete ready-to-run/ fpga:$REMOTE_ROOT/ready-to-run/
 /home/youkunlin/FpgaDiff-playground/ready-to-run/<target>
 ```
 
-## 烧写和运行
+## Flash and Run
 
-target 名称与 `env-scripts/fpga_diff/Makefile` 保持一致：
+Target names match `env-scripts/fpga_diff/Makefile`:
 
 ```sh
 make write_bitstream FPGA_BIT_HOME=/path/to/bitstream-dir
@@ -205,7 +207,7 @@ make write_jtag_ddr FPGA_BIT_HOME=/path/to/bitstream-dir WORKLOAD=/path/to/workl
 make reset_cpu FPGA_BIT_HOME=/path/to/bitstream-dir
 ```
 
-这些命令支持 `REMOTE`。在 `fpga` 上位机运行时，推荐使用远端固定路径：
+These commands support `REMOTE`. When running on the FPGA host, use the fixed remote path:
 
 ```sh
 REMOTE_ROOT=/home/youkunlin/FpgaDiff-playground
@@ -224,7 +226,7 @@ make write_jtag_ddr \
   WORKLOAD=$REMOTE_ROOT/ready-to-run/linux-hello/linux-hello.txt
 ```
 
-`run_host` 也支持 `REMOTE`，默认日志写到远端 `build/run-log/run-YYYYmmdd-HHMMSS-NNNNNNNNN.log`：
+`run_host` also supports `REMOTE`. Logs default to `build/run-log/run-YYYYmmdd-HHMMSS-NNNNNNNNN.log`:
 
 ```sh
 XS_RELEASE_NAME=$(cat build/release/latest-xiangshan.name)

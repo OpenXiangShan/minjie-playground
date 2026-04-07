@@ -1,19 +1,19 @@
-# FPGA DiffTest 执行示例
+# FPGA DiffTest Walkthrough
 
-这个例子假设：
+This example assumes:
 
-- `node004` 用于编译 XiangShan/NutShell Verilog、release、`fpga-host`、NEMU reference so 和 workload
-- `open103` 用于 Vivado 生成 bitstream
-- `node004` 和 `open103` 共享 `/nfs`
-- `fpga` 是 FPGA 上位机，不共享 `/nfs`
-- NFS 仓库路径是 `/nfs/home/youkunlin/workspace/FpgaDiff-playground`
-- `fpga` 上位机仓库路径是 `/home/fpga-v/youkunlin/FpgaDiff-playground`
+- `node004` is used for compiling XiangShan/NutShell Verilog, release, `fpga-host`, NEMU reference SO, and workloads
+- `open103` is used for Vivado bitstream generation
+- `node004` and `open103` share `/nfs`
+- `fpga` is the FPGA host machine and does **not** share `/nfs`
+- NFS repository path: `/nfs/home/youkunlin/workspace/FpgaDiff-playground`
+- FPGA host repository path: `/home/fpga-v/youkunlin/FpgaDiff-playground`
 
-下面以 XiangShan 为例。NutShell 时把设计参数换成 `nutshell`。
+The example uses XiangShan. For NutShell, replace the design argument with `nutshell`.
 
-## 1. 在 node004 编译 Verilog、release 和 host
+## 1. Build Verilog, Release, and Host on node004
 
-登录 `node004`：
+Log in to `node004`:
 
 ```sh
 cd /nfs/home/youkunlin/workspace/FpgaDiff-playground
@@ -30,29 +30,29 @@ export XS_RELEASE_NAME=$(cat build/release/latest-xiangshan.name)
 make host xiangshan FPGA_HOST_HOME=$XS_RELEASE
 ```
 
-此时 release 位于：
+The release directory is now at:
 
 ```sh
 echo $XS_RELEASE
 ```
 
-默认形如：
+The default path looks like:
 
 ```text
 /nfs/home/youkunlin/workspace/FpgaDiff-playground/build/release/20260407_XSTop_FpgaDiffDefaultConfig_FullDiff-noVec_ESBIFDU_012345
 ```
 
-最后的 `012345` 来自默认 `RELEASE_SUFFIX=HHMMSS`，用于避免重复。
+The trailing `012345` comes from the default `RELEASE_SUFFIX=HHMMSS`, which prevents overwrites.
 
-Verilog、release、host 的日志在：
+Logs for Verilog, release, and host are in:
 
 ```text
 build/build-log/
 ```
 
-## 2. 在 open103 生成 bitstream
+## 2. Generate Bitstream on open103
 
-`open103` 的 Vivado 环境已经配置好，因此不需要额外设置 `REMOTE_ENV`：
+The Vivado environment on `open103` is already configured, so `REMOTE_ENV` is not needed:
 
 ```sh
 cd /nfs/home/youkunlin/workspace/FpgaDiff-playground
@@ -63,23 +63,23 @@ make bit \
   REMOTE_DIR=/nfs/home/youkunlin/workspace/FpgaDiff-playground
 ```
 
-输出会收集到：
+Output is collected into:
 
 ```text
 bitstream/xiangshan-YYYYmmdd-HHMMSS/
 ```
 
-该目录下应包含 `.bit`、`.ltx` 和本次使用的 release 目录。默认会使用 `build/release/latest-xiangshan.path` 指向的 release。
+This directory contains `.bit`, `.ltx`, and the release directory used for synthesis. By default, the release pointed to by `build/release/latest-xiangshan.path` is used.
 
-Vivado 日志也会写到共享 NFS 上的：
+The Vivado log is written to the shared NFS at:
 
 ```text
 build/build-log/bit-kmh-YYYYmmdd-HHMMSS.log
 ```
 
-## 3. 构建 NEMU、workload 并生成 DDR txt
+## 3. Build NEMU, Workload, and DDR txt
 
-仍在 NFS 仓库上执行：
+Still on the NFS repository:
 
 ```sh
 cd /nfs/home/youkunlin/workspace/FpgaDiff-playground
@@ -90,7 +90,7 @@ make nemu NEMU_CONFIG=$NEMU_CONFIG
 make workload TARGET=linux/hello
 ```
 
-输出文件：
+Output files:
 
 ```text
 ready-to-run/$NEMU_CONFIG/riscv64-nemu-interpreter-so
@@ -98,16 +98,16 @@ ready-to-run/linux-hello/linux-hello.bin
 ready-to-run/linux-hello/linux-hello.txt
 ```
 
-NEMU、workload 和 Bin2ddr 的日志在：
+Logs for NEMU, workload, and Bin2ddr:
 
 ```text
 build/build-log/nemu-$NEMU_CONFIG-YYYYmmdd-HHMMSS.log
 build/build-log/workload-linux-hello-YYYYmmdd-HHMMSS.log
 ```
 
-## 4. 复制到 fpga 上位机
+## 4. Sync to FPGA Host
 
-`fpga` 不共享 NFS，直接把要测试的顶层 `bitstream/<design>-<time>/` bundle 和顶层 `ready-to-run/` 复制到远端固定路径。下面的 `BIT_TAG` 替换成第 2 步生成的实际目录名：
+`fpga` does not share NFS. Copy the bitstream bundle and `ready-to-run/` to a fixed path on the remote machine. Replace `BIT_TAG` with the actual directory name from step 2:
 
 ```sh
 cd /nfs/home/youkunlin/workspace/FpgaDiff-playground
@@ -122,7 +122,7 @@ rsync -a --delete \
 rsync -a --delete ready-to-run/ fpga:$FPGA_ROOT/ready-to-run/
 ```
 
-同步后远端关键路径为：
+After sync, the key remote paths are:
 
 ```text
 /home/fpga-v/youkunlin/FpgaDiff-playground/bitstream/<bundle-name>/$XS_RELEASE_NAME
@@ -133,9 +133,9 @@ rsync -a --delete ready-to-run/ fpga:$FPGA_ROOT/ready-to-run/
 /home/fpga-v/youkunlin/FpgaDiff-playground/ready-to-run/linux-hello/linux-hello.txt
 ```
 
-## 5. 在 fpga 上烧写、写 DDR、运行 host
+## 5. Write Bitstream, Write DDR, and Run Host on FPGA
 
-在 NFS 仓库中通过 `REMOTE=fpga` 执行：
+Execute from the NFS repository via `REMOTE=fpga`:
 
 ```sh
 cd /nfs/home/youkunlin/workspace/FpgaDiff-playground
@@ -163,7 +163,7 @@ make reset_cpu \
   FPGA_BIT_HOME=$BIT_ROOT
 ```
 
-运行 host：
+Run the host:
 
 ```sh
 make run_host \
@@ -173,7 +173,7 @@ make run_host \
   HOST_ARGS="--diff $FPGA_ROOT/ready-to-run/$NEMU_CONFIG/riscv64-nemu-interpreter-so -i $FPGA_ROOT/ready-to-run/linux-hello/linux-hello.bin"
 ```
 
-日志默认写到本地：
+Logs are written locally by default:
 
 ```text
 build/run-log/run-YYYYmmdd-HHMMSS.log
