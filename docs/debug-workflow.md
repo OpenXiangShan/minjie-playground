@@ -16,10 +16,10 @@ Use this workflow when:
 
 ## Job Directory Structure
 
-Create a new job directory under `jobs/` for each investigation:
+Create a new job directory under `jobs/` for each investigation. The directory name MUST include date and time down to minutes:
 
 ```text
-jobs/<YYYYmmdd>-<keyword>/
+jobs/<YYYYmmdd-HHMM>-<keyword>/
 ├── debug-plan.md          # Initial plan with hypotheses and steps
 ├── progress.md            # Chronological execution log
 ├── commands.sh            # Reusable commands and helper functions
@@ -27,7 +27,7 @@ jobs/<YYYYmmdd>-<keyword>/
 └── logs/                  # Collected log files and outputs
 ```
 
-The `jobs/` directory is gitignored. The naming convention is `<date>-<short-keyword>`, e.g., `20260408-xdma-runhost-flap`.
+The `jobs/` directory is gitignored. The naming convention is `<YYYYmmdd-HHMM>-<short-keyword>`, e.g., `20260408-1430-xdma-runhost-flap`.
 
 ## Phase 1: Create the Debug Plan
 
@@ -175,9 +175,9 @@ For Level 2 and Level 3 details, refer to [`difftest/docs/test.md`](../difftest/
 
 ## Checklist
 
-Before starting a debug session:
+- Before starting a debug session:
 
-- [ ] Create `jobs/<date>-<keyword>/`
+- [ ] Create `jobs/<YYYYmmdd-HHMM>-<keyword>/`
 - [ ] Write `debug-plan.md` with hypotheses and steps
 - [ ] Start `progress.md` with environment info
 
