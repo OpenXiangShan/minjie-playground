@@ -247,7 +247,7 @@ bit:
 		$(MAKE) -C $(FPGA_DIFF_HOME) bitstream PRJ=$(PRJ) 2>&1 | tee -a $(BIT_LOG))
 	$(call remote,set -o pipefail; \
 		release_src="$(BIT_SRC_DIR)"; \
-		find $(FPGA_DIFF_HOME)/fpga_$(CPU) -type f \( -name '*.bit' -o -name '*.ltx' \) \
+		find $(FPGA_DIFF_HOME)/fpga_$(CPU) -type f \( -name "*.bit" -o -name "*.ltx" \) \
 			-exec cp -f {} "$(BIT_OUT_DIR)/" \; && \
 		cp -a "$$release_src" "$(BIT_OUT_DIR)/" && \
 		find "$(BIT_OUT_DIR)" -maxdepth 1 -mindepth 1 | sort | tee -a $(BIT_LOG))
