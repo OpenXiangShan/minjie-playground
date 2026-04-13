@@ -87,22 +87,26 @@ cd /nfs/home/youkunlin/workspace/FpgaDiff-playground
 export NEMU_CONFIG=riscv64-xs-ref-novec-nopmppma_defconfig
 make nemu NEMU_CONFIG=$NEMU_CONFIG
 
-make workload TARGET=linux/hello
+make workload xiangshan TARGET=am/hello
+make workload xiangshan TARGET=linux/hello
 ```
 
 Output files:
 
 ```text
 ready-to-run/$NEMU_CONFIG/riscv64-nemu-interpreter-so
-ready-to-run/linux-hello/linux-hello.bin
-ready-to-run/linux-hello/linux-hello.txt
+ready-to-run/xiangshan-am-hello/xiangshan-am-hello.bin
+ready-to-run/xiangshan-am-hello/xiangshan-am-hello.txt
+ready-to-run/xiangshan-linux-hello/xiangshan-linux-hello.bin
+ready-to-run/xiangshan-linux-hello/xiangshan-linux-hello.txt
 ```
 
 Logs for NEMU, workload, and Bin2ddr:
 
 ```text
 build/build-log/nemu-$NEMU_CONFIG-YYYYmmdd-HHMMSS.log
-build/build-log/workload-linux-hello-YYYYmmdd-HHMMSS.log
+build/build-log/workload-xiangshan-am-hello-YYYYmmdd-HHMMSS.log
+build/build-log/workload-xiangshan-linux-hello-YYYYmmdd-HHMMSS.log
 ```
 
 ## 4. Sync to FPGA Host
@@ -129,8 +133,10 @@ After sync, the key remote paths are:
 /home/fpga-v/youkunlin/FpgaDiff-playground/bitstream/<bundle-name>/*.bit
 /home/fpga-v/youkunlin/FpgaDiff-playground/bitstream/<bundle-name>/*.ltx
 /home/fpga-v/youkunlin/FpgaDiff-playground/ready-to-run/$NEMU_CONFIG/riscv64-nemu-interpreter-so
-/home/fpga-v/youkunlin/FpgaDiff-playground/ready-to-run/linux-hello/linux-hello.bin
-/home/fpga-v/youkunlin/FpgaDiff-playground/ready-to-run/linux-hello/linux-hello.txt
+/home/fpga-v/youkunlin/FpgaDiff-playground/ready-to-run/xiangshan-am-hello/xiangshan-am-hello.bin
+/home/fpga-v/youkunlin/FpgaDiff-playground/ready-to-run/xiangshan-am-hello/xiangshan-am-hello.txt
+/home/fpga-v/youkunlin/FpgaDiff-playground/ready-to-run/xiangshan-linux-hello/xiangshan-linux-hello.bin
+/home/fpga-v/youkunlin/FpgaDiff-playground/ready-to-run/xiangshan-linux-hello/xiangshan-linux-hello.txt
 ```
 
 ## 5. Write Bitstream, Write DDR, and Run Host on FPGA
@@ -155,7 +161,7 @@ make write_jtag_ddr \
   REMOTE=fpga \
   REMOTE_DIR=$FPGA_ROOT \
   FPGA_BIT_HOME=$BIT_ROOT \
-  WORKLOAD=$FPGA_ROOT/ready-to-run/linux-hello/linux-hello.txt
+  WORKLOAD=$FPGA_ROOT/ready-to-run/xiangshan-am-hello/xiangshan-am-hello.txt
 
 make reset_cpu \
   REMOTE=fpga \
@@ -170,7 +176,7 @@ make run_host \
   REMOTE=fpga \
   REMOTE_DIR=$FPGA_ROOT \
   HOST_BIN=$BIT_ROOT/$XS_RELEASE_NAME/build/fpga-host \
-  HOST_ARGS="--diff $FPGA_ROOT/ready-to-run/$NEMU_CONFIG/riscv64-nemu-interpreter-so -i $FPGA_ROOT/ready-to-run/linux-hello/linux-hello.bin"
+  HOST_ARGS="--diff $FPGA_ROOT/ready-to-run/$NEMU_CONFIG/riscv64-nemu-interpreter-so -i $FPGA_ROOT/ready-to-run/xiangshan-am-hello/xiangshan-am-hello.bin"
 ```
 
 In Copilot Local Mode, remote write and run steps should use the form `ssh "command" 2>&1 | tee log ; echo ""`. This applies to `make write_bitstream`, `make write_jtag_ddr`, `make reset_cpu`, and `make run_host`.

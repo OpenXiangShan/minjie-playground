@@ -5,8 +5,20 @@ This document covers workload build options, device tree configuration, and UART
 ## Build Command
 
 ```sh
-make workload TARGET=<target>
+make workload xiangshan TARGET=<target>   # XiangShan
+make workload nutshell  TARGET=<target>   # NutShell
 ```
+
+The `DESIGN` (xiangshan/nutshell) is required. For AM targets, the Makefile automatically sets:
+
+| Design | ARCH | CPPFLAGS |
+|--------|------|----------|
+| xiangshan | `riscv64-xs` | `-DUART16550=1` |
+| nutshell | `riscv64-nutshell` | `-DUART16550=1` |
+
+`-DUART16550=1` selects the ns16550a serial driver in the AM runtime. Without it, UARTLite is used.
+
+You can override these by setting `AM_CPPFLAGS` explicitly.
 
 Available targets:
 
@@ -28,8 +40,15 @@ Available targets:
 Output for each target:
 
 ```text
-ready-to-run/<target-slug>/<target-slug>.bin    # raw binary image
-ready-to-run/<target-slug>/<target-slug>.txt    # DDR initialization file (via Bin2ddr)
+ready-to-run/<design>-<target-slug>/<design>-<target-slug>.bin    # raw binary image
+ready-to-run/<design>-<target-slug>/<design>-<target-slug>.txt    # DDR initialization file (via Bin2ddr)
+```
+
+For example, `make workload xiangshan TARGET=am/hello` produces:
+
+```text
+ready-to-run/xiangshan-am-hello/xiangshan-am-hello.bin
+ready-to-run/xiangshan-am-hello/xiangshan-am-hello.txt
 ```
 
 ## Firmware Assembly

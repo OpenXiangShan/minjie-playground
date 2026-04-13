@@ -122,7 +122,7 @@ endef
 TARGET ?= linux/hello
 WORKLOAD_TYPE ?= $(firstword $(subst /, ,$(TARGET)))
 WORKLOAD_NAME ?= $(if $(findstring /,$(TARGET)),$(word 2,$(subst /, ,$(TARGET))),$(TARGET))
-WORKLOAD_TAG ?= $(subst /,-,$(TARGET))
+WORKLOAD_TAG ?= $(DESIGN)-$(subst /,-,$(TARGET))
 WORKLOAD_BIN ?=
 WORKLOAD_LINUX_BIN := $(WORKLOAD_HOME)/build/linux-workloads/$(WORKLOAD_NAME)/fw_payload.bin
 WORKLOAD_AM_BIN_DIR := $(WORKLOAD_HOME)/build/am-workloads/$(WORKLOAD_NAME)/package/bin
@@ -130,6 +130,10 @@ WORKLOAD_OUT_DIR ?= $(READY_TO_RUN_DIR)/$(WORKLOAD_TAG)
 WORKLOAD_OUT_BIN ?= $(WORKLOAD_OUT_DIR)/$(WORKLOAD_TAG).bin
 WORKLOAD_OUT_TXT ?= $(WORKLOAD_OUT_DIR)/$(WORKLOAD_TAG).txt
 BIN2DDR_ARGS ?=
+
+# AM workload: select ARCH and CPPFLAGS based on DESIGN
+AM_ARCH ?= $(if $(filter nutshell,$(DESIGN)),riscv64-nutshell,riscv64-xs)
+AM_CPPFLAGS  ?= -DUART16550=1
 
 HOST_BIN ?= $(if $(FPGA_HOST_HOME),$(FPGA_HOST_HOME)/build/fpga-host,)
 HOST_ARGS ?=
@@ -147,7 +151,7 @@ help:
 	@printf '%s\n' '  make release xiangshan            package RTL/difftest release'
 	@printf '%s\n' '  make host xiangshan FPGA_HOST_HOME=...'
 	@printf '%s\n' '  make bit xiangshan                build bitstream bundle under bitstream/<design>-<time>/'
-	@printf '%s\n' '  make workload TARGET=linux/hello   build workload and generate ready-to-run/<target>'
+	@printf '%s\n' '  make workload xiangshan TARGET=am/hello  build workload and generate ready-to-run/<design>-<target>'
 	@printf '%s\n' '  make nemu                         build NEMU ref so into ready-to-run/<NEMU_CONFIG>/'
 	@printf '%s\n' '  make write_bitstream FPGA_BIT_HOME=...'
 	@printf '%s\n' '  make write_jtag_ddr FPGA_BIT_HOME=... WORKLOAD=...'
@@ -268,8 +272,14 @@ reset_cpu:
 	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) reset_cpu FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
 
 workload:
+	$(call require_design)
 	mkdir -p $(WORKLOAD_OUT_DIR) $(BUILD_LOG_DIR)
-	set -o pipefail; $(MAKE) -C $(WORKLOAD_HOME) $(TARGET) -j$(JOBS) 2>&1 | tee $(WORKLOAD_LOG)
+	set -o pipefail; \
+	if [ "$(WORKLOAD_TYPE)" = "am" ]; then \
+		$(MAKE) -C $(WORKLOAD_HOME) $(TARGET) ARCH=$(AM_ARCH) CPPFLAGS="$(AM_CPPFLAGS)" -j$(JOBS) 2>&1 | tee $(WORKLOAD_LOG); \
+	else \
+		$(MAKE) -C $(WORKLOAD_HOME) $(TARGET) -j$(JOBS) 2>&1 | tee $(WORKLOAD_LOG); \
+	fi
 	set -o pipefail; src="$(WORKLOAD_BIN)"; \
 	if [ -z "$$src" ] && [ "$(WORKLOAD_TYPE)" = "linux" ]; then src="$(WORKLOAD_LINUX_BIN)"; fi; \
 	if [ -z "$$src" ] && [ "$(WORKLOAD_TYPE)" = "am" ]; then \
