@@ -170,7 +170,6 @@ init:
 	git -C $(XS_HOME) config submodule.difftest.update none
 	git -C $(NUT_HOME) config submodule.difftest.update none
 	$(MAKE) -C $(XS_HOME) init
-	$(MAKE) -C $(NUT_HOME) init
 	$(MAKE) -C $(WORKLOAD_HOME) init
 	$(MAKE) -C $(BIN2DDR_HOME) FPGA=1
 	$(MAKE) link_difftest
