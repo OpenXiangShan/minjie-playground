@@ -22,3 +22,7 @@
 	path = NEMU
 	url = https://github.com/OpenXiangShan/NEMU.git
 	branch = no-vec-check
+[submodule "dma_ip_drivers"]
+	path = dma_ip_drivers
+	url = https://github.com/klin02/dma_ip_drivers.git
+	branch = fpga-diff

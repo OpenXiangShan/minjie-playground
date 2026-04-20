@@ -9,6 +9,7 @@
 | [example.md](./example.md) | Complete walkthrough with concrete commands for XiangShan and NutShell |
 | [workload.md](./workload.md) | Workload compilation: UART selection (ns16550a vs UARTLite), reg-shift, interrupt routing, NEMU config |
 | [troubleshooting.md](./troubleshooting.md) | Common issues and debugging approaches: XDMA/PCIe, host hangs, packet errors, DiffTest mismatches |
+| [xdma.md](./xdma.md) | XDMA driver: build with device ID and polling mode, install, load script, systemd service, troubleshooting |
 | [debug-workflow.md](./debug-workflow.md) | Structured debugging workflow for complex issues: job directories, plan/progress tracking, sub-agent delegation |
 
 ## Recommended Reading Order
