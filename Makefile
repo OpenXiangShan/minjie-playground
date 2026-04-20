@@ -29,7 +29,7 @@ DIFFTEST_CONFIG ?= ESBIFDU
 DIFFTEST_EXCLUDE ?= Vec
 
 XS_CONFIG ?= FpgaDiffDefaultConfig
-XS_DEBUG_ARGS ?= --difftest-config $(DIFFTEST_CONFIG) --difftest-exclude $(DIFFTEST_EXCLUDE)
+XS_DEBUG_ARGS ?= --difftest-config $(DIFFTEST_CONFIG) $(if $(strip $(DIFFTEST_EXCLUDE)),--difftest-exclude $(DIFFTEST_EXCLUDE),)
 
 NUT_BOARD ?= fpgadiff
 NUT_MILL_ARGS ?= --difftest-config $(DIFFTEST_CONFIG)
