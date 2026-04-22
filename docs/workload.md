@@ -66,6 +66,38 @@ Offset        Component
 
 The assembly is performed by `workload-builder/scripts/build-firmware-linux.sh`. Memory base is `0x80000000`.
 
+### Using `xiangshan-fpga-noAIA.dtb`
+
+For Linux workloads in the current flow, the top-level `make workload` splices `xiangshan-fpga-noAIA.dtb` by default. You do not need to pass extra arguments:
+
+```sh
+make workload xiangshan TARGET=linux/hello
+```
+
+Internally, the flow still does the DTB replacement:
+
+1. Build `workload-builder/build/linux-workloads/hello/fw_payload.bin` and the generated DTBs.
+2. Locate `workload-builder/build/linux-workloads/hello/dt/xiangshan-fpga-noAIA.dtb`.
+3. Splice that DTB into `ready-to-run/xiangshan-linux-hello/xiangshan-linux-hello.bin` at the fixed 1536 KiB DTB offset before running Bin2ddr.
+
+If you need to override the default, pass only the `.dtb` filename under the generated `dt/` directory:
+
+```sh
+make workload xiangshan TARGET=linux/hello WORKLOAD_DTB=xiangshan.dtb
+```
+
+`WORKLOAD_DTB` is resolved under:
+
+```text
+workload-builder/build/linux-workloads/<workload>/dt/<dtb-name>
+```
+
+For the current XiangShan FPGA flow, `xiangshan-fpga-noAIA.dts.in` means:
+
+- AIA is not described in the DTS
+- Linux uses the legacy CLINT + PLIC interrupt topology
+- the FPGA UART16550 is exposed as the Linux console
+
 ## Device Tree and UART Configuration
 
 Each platform has a device tree template under `workload-builder/dts/`. The UART type and configuration differ by platform.
@@ -145,7 +177,7 @@ To change UART settings:
 2. **Rebuild the workload** to regenerate the `.dtb`:
 
     ```sh
-    make workload TARGET=linux/hello
+    make workload xiangshan TARGET=linux/hello
     ```
 
 3. **Update NEMU configuration** if the UART model is changed. NEMU selects UART behavior via Kconfig flags in `NEMU/configs/`:
