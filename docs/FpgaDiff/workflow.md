@@ -5,6 +5,7 @@ This document describes the end-to-end FPGA DiffTest flow. Each step lists optio
 ## Common Placeholders
 
 - `<DESIGN>`: top-level design target such as `xiangshan` or `nutshell`
+- `<XS_CONFIG>`: XiangShan config used for `make verilog xiangshan`
 - `<VIVADO_REMOTE>`: remote machine used for Vivado synthesis and implementation
 - `<FPGA_REMOTE>`: remote FPGA host
 - `<NEMU_CONFIG>`: NEMU defconfig name
@@ -34,6 +35,8 @@ make verilog $DESIGN
 ```
 
 Output: Verilog files under `<design>/build/`.
+
+For the XiangShan OpenLLC flow, use `XS_CONFIG=FpgaDiffKMHV2Config`.
 
 ## Step 2: Create Release
 
@@ -87,6 +90,9 @@ Output: `$RELEASE_PATH/build/fpga-host`
 | `REMOTE_DIR` | repository root | Repository path on the remote host |
 | `REMOTE_ENV` | `source ~/.bash_profile &&` | Remote environment setup command |
 | `BIT_SRC_DIR` | latest release | Release directory used for synthesis |
+| `SUFFIX` | empty | Suffix appended to the Vivado project directory name |
+| `BIT_TAG` | `<design>-<timestamp>` | Bitstream bundle directory name under `bitstream/` |
+| `CHI_DIR` | empty | Extra CHI glue RTL/header directory for external NoC CHI wrappers |
 
 ### Example
 
@@ -107,6 +113,9 @@ bitstream/$BIT_TAG/$RELEASE_NAME/
 bitstream/$BIT_TAG/*.bit
 bitstream/$BIT_TAG/*.ltx
 ```
+
+Set `CHI_DIR` only for flows that use an external CHI-interface NoC. The
+OpenLLC flow does not need `CHI_DIR`.
 
 ## Step 5: Build NEMU Reference
 
