@@ -115,7 +115,7 @@ Common issues encountered during FPGA DiffTest and how to diagnose them.
 5. **Verify the workload binary**: Check the file size is reasonable:
 
     ```sh
-    ls -la ready-to-run/linux-hello/linux-hello.bin
+    ls -la ready-to-run/xiangshan-linux-hello/xiangshan-linux-hello.bin
     ```
 
     For Linux workloads, the binary should be several megabytes. A very small file suggests a build failure.
@@ -166,11 +166,11 @@ Common issues encountered during FPGA DiffTest and how to diagnose them.
 
 3. **Reproduce in simulation**: If the NEMU config is correct and the mismatch persists, it may be a DiffTest internal issue. Run the same workload in software simulation (EMU/simv) to verify:
 
-    Refer to [`difftest/docs/test.md`](../difftest/docs/test.md) for simulation build and run commands, and [`difftest/docs/workflow.md`](../difftest/docs/workflow.md) for the phased debugging escalation:
+    Refer to [`difftest/docs/test.md`](../../difftest/docs/test.md) for simulation build and run commands, and [`difftest/docs/workflow.md`](../../difftest/docs/workflow.md) for the phased debugging escalation:
 
     - **Level 1**: Console output — identify the first failing checker and cycle
     - **Level 2**: Query DB — compare DUT and REF state at the divergent step
-    - **Level 3**: Waveform dump — if Query DB is not sufficient, dump FST waveforms
+    - **Level 3**: Waveform dump — if Query DB is not sufficient, dump waveforms with ILA
 
 4. **Check for known issues**: Some comparison errors are caused by non-deterministic hardware state (e.g., timer CSRs, performance counters). These are typically excluded via `DIFFTEST_EXCLUDE`. Verify the exclude list includes appropriate modules.
 

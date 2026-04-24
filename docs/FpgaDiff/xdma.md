@@ -11,7 +11,7 @@ Build, install, and configure the Xilinx XDMA character-mode driver for FPGA Dif
 ## 1. Build
 
 ```bash
-cd /path/to/FpgaDiff-playground/dma_ip_drivers/XDMA/linux-kernel/xdma
+cd /path/to/minjie-playground/dma_ip_drivers/XDMA/linux-kernel/xdma
 make clean
 make DEVICE_ID=0x9048 VENDOR_ID=0x10ee POLLING=1
 ```
@@ -121,7 +121,7 @@ Check if the PCIe device is enumerated:
 ```bash
 lspci -d 10ee:
 ```
-If empty, the FPGA may need a bitstream reprogram (see [testing-flow.md](./testing-flow.md)).
+If empty, the FPGA may need a bitstream reprogram (see [workflow.md](./workflow.md)).
 
 Check if the device ID matches what the driver was compiled with:
 ```bash

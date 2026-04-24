@@ -3,7 +3,7 @@
 ## Repository Overview
 
 ```text
-FpgaDiff-playground/
+minjie-playground/
 ├── Makefile                 # Top-level build orchestrator
 ├── AGENTS.md                # Agent guidelines (points here)
 ├── docs/                    # Project documentation
@@ -44,9 +44,9 @@ FpgaDiff-playground/
 | `build/build-log/` | Per-stage logs: `verilog-*`, `release-*`, `host-*`, `bit-*`, `nemu-*`, `workload-*` |
 | `build/run-log/` | `run_host` runtime logs with timestamps |
 | `ready-to-run/<nemu-config>/` | NEMU reference SO (`riscv64-nemu-interpreter-so`) |
-| `ready-to-run/<target>/` | Workload `.bin` and Bin2ddr `.txt` |
+| `ready-to-run/<design>-<target>/` | Workload `.bin` and Bin2ddr `.txt` |
 | `bitstream/<design>-<time>/` | Bitstream bundle: `.bit`, `.ltx`, and the release directory used for synthesis |
-| `jobs/<date>-<keyword>/` | Debug job artifacts: plan, progress, commands, logs (see [debug-workflow.md](./debug-workflow.md)) |
+| `jobs/<job-id>/` | Debug job artifacts: plan, progress, commands, logs (see [debug-flow.md](./debug-flow.md)) |
 
 ## Key Files
 
