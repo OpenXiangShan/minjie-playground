@@ -27,6 +27,8 @@ XiangShan / NutShell Verilog
 | `bitstream/<design>-<time>/` | Bitstream bundle with `.bit`, `.ltx`, and release directory |
 | `jobs/<job-id>/` | Debug notes, logs, and summaries for multi-step investigations |
 
+Shared-board occupancy on the FPGA host is recorded outside the repository under `~/.fpga_used/`, managed by [`scripts/fpga_usage.sh`](../../scripts/fpga_usage.sh).
+
 ## Document Index
 
 | Document | Contents |

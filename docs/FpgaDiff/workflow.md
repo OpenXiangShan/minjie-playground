@@ -194,6 +194,21 @@ rsync -a --delete ready-to-run/ <FPGA_REMOTE>:$REMOTE_ROOT/ready-to-run/
 | `DIFF` | empty | NEMU SO path for diff mode |
 | `HOST` | $FPGA_BIT_HOME/*/build/fpga-host | Explicit `fpga-host` path override |
 
+Before using the shared VU19P board, initialize and inspect the occupancy marker:
+
+```sh
+make fpga_init REMOTE=<FPGA_REMOTE> REMOTE_DIR=$REMOTE_ROOT
+make fpga_status REMOTE=<FPGA_REMOTE> REMOTE_DIR=$REMOTE_ROOT
+```
+
+The marker lives under `~/.fpga_used/` on the FPGA host. The default board files are:
+
+```text
+~/.fpga_used/vu19p.status
+~/.fpga_used/vu19p.in_use
+~/.fpga_used/vu19p.idle
+```
+
 ### Example
 
 ```sh
@@ -212,7 +227,7 @@ make run_host \
   DIFF=$REMOTE_ROOT/ready-to-run/$NEMU_CONFIG/riscv64-nemu-interpreter-so
 ```
 
-`run_host` auto-finds `fpga-host` under `FPGA_BIT_HOME`, picks the `.bin` and `.txt` inside `WORKLOAD`, and auto-generates `FPGA_DDR_LOAD_CMD`.
+`run_host` auto-finds `fpga-host` under `FPGA_BIT_HOME`, picks the `.bin` and `.txt` inside `WORKLOAD`, auto-generates `FPGA_DDR_LOAD_CMD`, and releases the occupancy marker automatically when `fpga-host` exits.
 
 ### Manual Debug Path
 
@@ -225,6 +240,15 @@ make write_jtag_ddr \
   FPGA_BIT_HOME=$BIT_ROOT \
   WORKLOAD=$REMOTE_ROOT/ready-to-run/$WORKLOAD_TAG
 ```
+
+For manual reservation or cleanup:
+
+```sh
+make fpga_claim REMOTE=<FPGA_REMOTE> REMOTE_DIR=$REMOTE_ROOT
+make fpga_release REMOTE=<FPGA_REMOTE> REMOTE_DIR=$REMOTE_ROOT
+```
+
+`write_bitstream`, `write_jtag_ddr`, `reset_cpu`, and `run_host` all check the occupancy marker before touching the board. If you stop after a manual flash / DDR / reset sequence without calling `run_host`, release the board explicitly with `make fpga_release`.
 
 ## Next Steps
 
