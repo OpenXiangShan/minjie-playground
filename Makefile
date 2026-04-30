@@ -59,10 +59,14 @@ REMOTE ?=
 REMOTE_DIR ?= $(ROOT_DIR)
 REMOTE_ENV ?= source ~/.bash_profile &&
 SSH ?= ssh
+FPGA_USAGE_BOARD ?= vu19p
+FPGA_USAGE_DIR ?=
 
 FPGA_ROOT := $(if $(strip $(REMOTE)),$(REMOTE_DIR),$(ROOT_DIR))
 FPGA_DIFF_HOME := $(FPGA_ROOT)/env-scripts/fpga_diff
 FPGA_BUILD_LOG_DIR ?= $(FPGA_ROOT)/build/build-log
+FPGA_USAGE_SCRIPT ?= $(FPGA_ROOT)/scripts/fpga_usage.sh
+FPGA_USAGE_ENV = FPGA_BOARD_NAME=$(FPGA_USAGE_BOARD)$(if $(strip $(FPGA_USAGE_DIR)), FPGA_USED_DIR=$(FPGA_USAGE_DIR),)
 
 CPU ?= $(if $(filter $(DESIGN),nutshell),nutshell,kmh)
 SUFFIX ?=
@@ -142,6 +146,7 @@ RUN_LOG ?= $(BUILD_DIR)/run-log/run-$$(date +%Y%m%d-%H%M%S).log
 
 .PHONY: help init link_difftest clean verilog release host bit write_bitstream \
 	write_jtag_ddr reset_cpu workload nemu run_host \
+	fpga_init fpga_status fpga_claim fpga_release \
 	xiangshan nutshell xs nut
 
 help:
@@ -159,6 +164,10 @@ help:
 	@printf '%s\n' '  make write_jtag_ddr FPGA_BIT_HOME=... WORKLOAD=<workload-dir>   # manual / debug path'
 	@printf '%s\n' '  make reset_cpu FPGA_BIT_HOME=...'
 	@printf '%s\n' '  make run_host FPGA_BIT_HOME=... WORKLOAD=<workload-dir> [HOST=...] [DIFF=/path/to/nemu-so]'
+	@printf '%s\n' '  make fpga_init REMOTE=fpga        initialize ~/.fpga_used/<board> status on FPGA host'
+	@printf '%s\n' '  make fpga_status REMOTE=fpga      show FPGA usage owner/status'
+	@printf '%s\n' '  make fpga_claim REMOTE=fpga       mark FPGA as in use by the current user'
+	@printf '%s\n' '  make fpga_release REMOTE=fpga     mark FPGA as idle again'
 	@printf '%s\n' ''
 	@printf '%s\n' 'run_host auto-finds fpga-host under FPGA_BIT_HOME and .bin/.txt under WORKLOAD.'
 	@printf '%s\n' 'Set WORKLOAD_DTB=<dtb-name> to override the default Linux DTB splice before Bin2ddr.'
@@ -264,19 +273,34 @@ bit:
 		cp -a "$$release_src" "$(BIT_OUT_DIR)/" && \
 		find "$(BIT_OUT_DIR)" -maxdepth 1 -mindepth 1 | sort | tee -a $(BIT_LOG))
 
+fpga_init:
+	$(call remote,$(FPGA_USAGE_ENV) $(FPGA_USAGE_SCRIPT) init)
+
+fpga_status:
+	$(call remote,$(FPGA_USAGE_ENV) $(FPGA_USAGE_SCRIPT) status)
+
+fpga_claim:
+	$(call remote,$(FPGA_USAGE_ENV) $(FPGA_USAGE_SCRIPT) acquire "manual claim from $(ROOT_DIR)")
+
+fpga_release:
+	$(call remote,$(FPGA_USAGE_ENV) $(FPGA_USAGE_SCRIPT) release "manual release from $(ROOT_DIR)")
+
 write_bitstream:
 	$(call require_var,FPGA_BIT_HOME)
+	$(call remote,$(FPGA_USAGE_ENV) $(FPGA_USAGE_SCRIPT) acquire "write_bitstream FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME))")
 	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) write_bitstream FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
 
 write_jtag_ddr:
 	$(call require_var,FPGA_BIT_HOME)
 	$(call require_var,WORKLOAD)
+	$(call remote,$(FPGA_USAGE_ENV) $(FPGA_USAGE_SCRIPT) acquire "write_jtag_ddr WORKLOAD=$(call abs_path,$(WORKLOAD))")
 	$(call remote,workload=$(call abs_path,$(WORKLOAD)); \
 		test -d "$$workload" && workload=$$(echo "$$workload"/*.txt) || true; \
 		$(MAKE) -C $(FPGA_DIFF_HOME) write_jtag_ddr FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)) WORKLOAD="$$workload")
 
 reset_cpu:
 	$(call require_var,FPGA_BIT_HOME)
+	$(call remote,$(FPGA_USAGE_ENV) $(FPGA_USAGE_SCRIPT) acquire "reset_cpu FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME))")
 	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) reset_cpu FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
 
 workload:
@@ -333,9 +357,9 @@ run_host:
 			FPGA_BIT_HOME=$$fpga_bit_home \
 			WORKLOAD=$$workload_txt"; \
 		if [ -n "$(DIFF)" ]; then \
-			exec env FPGA_DDR_LOAD_CMD="$$ddr_load_cmd" "$$host" --diff "$(call abs_path,$(DIFF))" -i "$$workload_bin"; \
+			env FPGA_DDR_LOAD_CMD="$$ddr_load_cmd" $(FPGA_USAGE_ENV) $(FPGA_USAGE_SCRIPT) with-lock "run_host $$host" "$$host" --diff "$(call abs_path,$(DIFF))" -i "$$workload_bin"; \
 		else \
-			exec env FPGA_DDR_LOAD_CMD="$$ddr_load_cmd" "$$host" --no-diff; \
+			env FPGA_DDR_LOAD_CMD="$$ddr_load_cmd" $(FPGA_USAGE_ENV) $(FPGA_USAGE_SCRIPT) with-lock "run_host $$host" "$$host" --no-diff; \
 		fi)
 
 xiangshan nutshell xs nut:
