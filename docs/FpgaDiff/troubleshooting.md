@@ -154,13 +154,14 @@ Common issues encountered during FPGA DiffTest and how to diagnose them.
 
     ```sh
     # XiangShan
-    make nemu NEMU_CONFIG=riscv64-xs-ref-novec-nopmppma_defconfig
+    make nemu NEMU_CONFIG=riscv64-xs-ref_defconfig
 
     # NutShell
     make nemu NEMU_CONFIG=riscv64-nutshell-ref_defconfig
     ```
 
     A common mistake is using the XiangShan NEMU config with NutShell, or vice versa.
+    XiangShan defaults to the vector-capable `riscv64-xs-ref_defconfig`; use a no-vector NEMU config only with a matching no-vector RTL build.
 
 2. **Check the mismatch details**: The `fpga-host` error output shows the checker name, cycle number, and divergent DUT vs REF state. Note which checker (e.g., `IntWriteback`, `CSR`, `Load`) triggers first — this narrows the scope.
 
@@ -172,7 +173,7 @@ Common issues encountered during FPGA DiffTest and how to diagnose them.
     - **Level 2**: Query DB — compare DUT and REF state at the divergent step
     - **Level 3**: Waveform dump — if Query DB is not sufficient, dump waveforms with ILA
 
-4. **Check for known issues**: Some comparison errors are caused by non-deterministic hardware state (e.g., timer CSRs, performance counters). These are typically excluded via `DIFFTEST_EXCLUDE`. Verify the exclude list includes appropriate modules.
+4. **Check for known issues**: Some comparison errors are caused by non-deterministic hardware state (e.g., timer CSRs, performance counters). These are typically excluded via `DIFFTEST_EXCLUDE`. Verify the exclude list includes appropriate modules. Do not exclude `Vec` unless the RTL and NEMU reference are both built for a no-vector flow.
 
 ## Quick Reference
 

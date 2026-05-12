@@ -21,7 +21,7 @@ This document describes the end-to-end FPGA DiffTest flow. Each step lists optio
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DIFFTEST_CONFIG` | `ESBIFDU` | DiffTest config letters |
-| `DIFFTEST_EXCLUDE` | `Vec` | Comma-separated exclude list |
+| `DIFFTEST_EXCLUDE` | empty | Comma-separated exclude list, such as `Vec` |
 | `JOBS` | `16` | Parallel compilation jobs |
 | `XS_CONFIG` | `FpgaDiffDefaultConfig` | XiangShan config used for `xiangshan` builds |
 
@@ -37,6 +37,7 @@ make verilog $DESIGN
 Output: Verilog files under `<design>/build/`.
 
 For the XiangShan OpenLLC flow, use `XS_CONFIG=FpgaDiffKMHV2Config`.
+For a no-vector XiangShan build, explicitly pass `DIFFTEST_EXCLUDE=Vec`.
 
 ## Step 2: Create Release
 
@@ -123,7 +124,7 @@ OpenLLC flow does not need `CHI_DIR`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEMU_CONFIG` | `riscv64-xs-ref-novec-nopmppma_defconfig` | NEMU defconfig used to build the reference SO |
+| `NEMU_CONFIG` | `riscv64-xs-ref_defconfig` | NEMU defconfig used to build the reference SO |
 
 ### Example
 
