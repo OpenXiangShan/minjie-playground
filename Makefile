@@ -26,7 +26,7 @@ DIFFTEST_HOME := $(ROOT_DIR)/difftest
 NEMU_HOME := $(ROOT_DIR)/NEMU
 
 DIFFTEST_CONFIG ?= ESBIFDU
-DIFFTEST_EXCLUDE ?= Vec
+DIFFTEST_EXCLUDE ?=
 
 XS_CONFIG ?= FpgaDiffDefaultConfig
 XS_DEBUG_ARGS ?= --difftest-config $(DIFFTEST_CONFIG) $(if $(strip $(DIFFTEST_EXCLUDE)),--difftest-exclude $(DIFFTEST_EXCLUDE),)
@@ -46,7 +46,7 @@ VERILOG_LOG ?= $(BUILD_LOG_DIR)/verilog-$(DESIGN)-$(LOG_STAMP).log
 HOST_LOG ?= $(BUILD_LOG_DIR)/host-$(DESIGN)-$(LOG_STAMP).log
 WORKLOAD_LOG ?= $(BUILD_LOG_DIR)/workload-$(WORKLOAD_TAG)-$(LOG_STAMP).log
 
-NEMU_CONFIG ?= riscv64-xs-ref-novec-nopmppma_defconfig
+NEMU_CONFIG ?= riscv64-xs-ref_defconfig
 NEMU_SO_NAME ?= riscv64-nemu-interpreter-so
 READY_TO_RUN_DIR ?= $(ROOT_DIR)/ready-to-run
 NEMU_OUT_DIR ?= $(READY_TO_RUN_DIR)/$(NEMU_CONFIG)
@@ -162,6 +162,7 @@ help:
 	@printf '%s\n' ''
 	@printf '%s\n' 'run_host auto-finds fpga-host under FPGA_BIT_HOME and .bin/.txt under WORKLOAD.'
 	@printf '%s\n' 'Set WORKLOAD_DTB=<dtb-name> to override the default Linux DTB splice before Bin2ddr.'
+	@printf '%s\n' 'Vector DiffTest is enabled by default; set DIFFTEST_EXCLUDE=Vec for a no-vector build.'
 	@printf '%s\n' 'Set DIFF=/path/to/nemu-so for diff mode; leave DIFF empty for --no-diff.'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Remote Vivado/FPGA: add REMOTE=user@host REMOTE_DIR=/path/to/FpgaDiff-playground.'
