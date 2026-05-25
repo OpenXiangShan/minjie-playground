@@ -53,6 +53,7 @@ minjie-playground/
 | File | Purpose |
 |------|---------|
 | `Makefile` | Top-level build targets (`init`, `verilog`, `release`, `host`, `bit`, `nemu`, `workload`, `write_bitstream`, `write_jtag_ddr`, `reset_cpu`, `run_host`) |
+| `scripts/fpga_usage.sh` | Shared FPGA occupancy helper for `~/.fpga_used/` on the FPGA host |
 | `build/release/latest-<design>.path` | Absolute path to the most recent release (for local use) |
 | `build/release/latest-<design>.name` | Release directory name only (for constructing remote paths) |
 | `env-scripts/fpga_diff/Makefile` | Vivado build and FPGA operation targets |
