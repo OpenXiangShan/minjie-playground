@@ -1,0 +1,241 @@
+name: Checkpoint
+
+run-name: "checkpoint: ${{ github.event.inputs.name || github.event.inputs.input_path }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_path:
+        description: Absolute path to a GCPT-bootable bin file or a directory containing bins
+        required: true
+        type: string
+      name:
+        description: Optional workload name override, only used for single-file mode
+        required: false
+        type: string
+      archive_id:
+        description: Existing archive id for resume, or explicit output archive id
+        required: false
+        type: string
+      output_base:
+        description: Optional output base directory; defaults to /nfs/home/share/<runner-username>/checkpoint-trigger
+        required: false
+        default: ""
+        type: string
+      interval:
+        description: Checkpoint interval
+        required: false
+        default: "20000000"
+        type: string
+      max_k:
+        description: Optional SimPoint maxK override; default 30, except xalancbmk uses 100
+        required: false
+        default: ""
+        type: string
+      max_workers:
+        description: Maximum parallel workloads used in directory mode
+        required: false
+        default: "3"
+        type: string
+      nemu:
+        description: NEMU defconfig or path; *_defconfig builds upstream NEMU in CI workspace
+        required: false
+        default: "riscv64-xs-cpt_defconfig"
+        type: string
+      resume_after:
+        description: Resume mode for an existing archive
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  run-checkpoint:
+    runs-on: self-hosted
+    timeout-minutes: 40320 # 28 days
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Run checkpoint flow
+        working-directory: scripts/checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ENV_SCRIPT="/nfs/home/share/workload_env/env.sh"
+          if [[ ! -r "$ENV_SCRIPT" ]]; then
+            echo "ERROR: missing environment script: $ENV_SCRIPT"
+            exit 1
+          fi
+          source "$ENV_SCRIPT"
+
+          RUNNER_USERNAME="$(id -un)"
+          OUTPUT_BASE_INPUT="${{ github.event.inputs.output_base }}"
+          CHECKPOINT_USERNAME="$RUNNER_USERNAME"
+          CHECKPOINT_OUTPUT_BASE="${OUTPUT_BASE_INPUT:-/nfs/home/share/${RUNNER_USERNAME}/checkpoint-trigger}"
+          export CHECKPOINT_USERNAME
+          export CHECKPOINT_OUTPUT_BASE
+
+          INPUT_PATH="${{ github.event.inputs.input_path }}"
+          WORKLOAD_NAME="${{ github.event.inputs.name }}"
+          ARCHIVE_ID_INPUT="${{ github.event.inputs.archive_id }}"
+          INTERVAL="${{ github.event.inputs.interval }}"
+          MAX_K_INPUT="${{ github.event.inputs.max_k }}"
+          MAX_WORKERS="${{ github.event.inputs.max_workers }}"
+          NEMU_INPUT="${{ github.event.inputs.nemu }}"
+          RESUME_AFTER="${{ github.event.inputs.resume_after }}"
+
+          validate_nemu_home() {
+            local nemu_home="$1"
+            local nemu_bin="$nemu_home/build/riscv64-nemu-interpreter"
+            local simpoint_bin="$nemu_home/resource/simpoint/simpoint_repo/bin/simpoint"
+
+            if [[ ! -x "$nemu_bin" ]]; then
+              echo "ERROR: missing executable NEMU binary: $nemu_bin"
+              exit 1
+            fi
+            if [[ ! -x "$simpoint_bin" ]]; then
+              echo "ERROR: missing executable SimPoint binary: $simpoint_bin"
+              exit 1
+            fi
+          }
+
+          if [[ -z "$INPUT_PATH" ]]; then
+            echo "ERROR: input_path must be provided"
+            exit 1
+          fi
+
+          if [[ ! -e "$INPUT_PATH" ]]; then
+            echo "ERROR: input_path does not exist: $INPUT_PATH"
+            exit 1
+          fi
+
+          if [[ ! "$INTERVAL" =~ ^[0-9]+$ ]] || [[ "$INTERVAL" -le 0 ]]; then
+            echo "ERROR: interval must be a positive integer, got: $INTERVAL"
+            exit 1
+          fi
+
+          if [[ -n "$MAX_K_INPUT" ]] && { [[ ! "$MAX_K_INPUT" =~ ^[0-9]+$ ]] || [[ "$MAX_K_INPUT" -le 0 ]]; }; then
+            echo "ERROR: max_k must be a positive integer when provided, got: $MAX_K_INPUT"
+            exit 1
+          fi
+
+          if [[ ! "$MAX_WORKERS" =~ ^[0-9]+$ ]] || [[ "$MAX_WORKERS" -le 0 ]]; then
+            echo "ERROR: max_workers must be a positive integer, got: $MAX_WORKERS"
+            exit 1
+          fi
+
+          if [[ -z "$NEMU_INPUT" ]]; then
+            echo "ERROR: nemu must be provided"
+            exit 1
+          fi
+
+          if [[ -n "$RESUME_AFTER" && "$RESUME_AFTER" != "auto" && "$RESUME_AFTER" != "profiling" && "$RESUME_AFTER" != "cluster" ]]; then
+            echo "ERROR: resume_after must be empty, auto, profiling, or cluster; got: $RESUME_AFTER"
+            exit 1
+          fi
+
+          if [[ -n "$RESUME_AFTER" && -z "$ARCHIVE_ID_INPUT" ]]; then
+            echo "ERROR: archive_id is required when resume_after is set"
+            exit 1
+          fi
+
+          if [[ -d "$INPUT_PATH" && -n "$WORKLOAD_NAME" ]]; then
+            echo "ERROR: name can only be used with a single file input"
+            exit 1
+          fi
+
+          EXTRA_ARGS=()
+          if [[ -n "$WORKLOAD_NAME" ]]; then
+            EXTRA_ARGS+=(--name "$WORKLOAD_NAME")
+          fi
+          if [[ -n "$ARCHIVE_ID_INPUT" ]]; then
+            EXTRA_ARGS+=(--archive-id "$ARCHIVE_ID_INPUT")
+          fi
+          if [[ -n "$MAX_K_INPUT" ]]; then
+            EXTRA_ARGS+=(--max-k "$MAX_K_INPUT")
+          fi
+          if [[ -n "$RESUME_AFTER" ]]; then
+            EXTRA_ARGS+=(--resume-after "$RESUME_AFTER")
+          fi
+
+          NEMU_MODE="path"
+          NEMU_DEFCONFIG=""
+          if [[ "$NEMU_INPUT" == *_defconfig ]]; then
+            NEMU_MODE="build"
+            NEMU_DEFCONFIG="$NEMU_INPUT"
+            NEMU_UPSTREAM_URL="https://github.com/OpenXiangShan/NEMU.git"
+            NEMU_UPSTREAM_BRANCH="master"
+            NEMU_HOME="$GITHUB_WORKSPACE/.ci-nemu-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+            echo "INFO: cloning upstream NEMU from $NEMU_UPSTREAM_URL branch=$NEMU_UPSTREAM_BRANCH"
+            rm -rf "$NEMU_HOME"
+            git clone --recursive --branch "$NEMU_UPSTREAM_BRANCH" "$NEMU_UPSTREAM_URL" "$NEMU_HOME"
+            (
+              cd "$NEMU_HOME"
+              git submodule update --init --recursive
+              make "$NEMU_DEFCONFIG"
+              make -j
+              cd "$NEMU_HOME/resource/gcpt_restore" && make -j
+              cd "$NEMU_HOME/resource/simpoint/simpoint_repo" && make -j
+            )
+          else
+            NEMU_HOME="$NEMU_INPUT"
+            if [[ ! -d "$NEMU_HOME" ]]; then
+              echo "ERROR: NEMU path does not exist: $NEMU_HOME"
+              exit 1
+            fi
+          fi
+          validate_nemu_home "$NEMU_HOME"
+          export NEMU_HOME
+
+          INPUT_KIND="file"
+          if [[ -d "$INPUT_PATH" ]]; then
+            INPUT_KIND="directory"
+          fi
+
+          echo "INFO: input_path=$INPUT_PATH"
+          echo "INFO: input_kind=$INPUT_KIND"
+          echo "INFO: interval=$INTERVAL"
+          echo "INFO: max_k=${MAX_K_INPUT:-auto}"
+          echo "INFO: max_workers=$MAX_WORKERS"
+          echo "INFO: nemu=$NEMU_INPUT"
+          echo "INFO: nemu_mode=$NEMU_MODE"
+          echo "INFO: nemu_home=$NEMU_HOME"
+          echo "INFO: archive_id=${ARCHIVE_ID_INPUT:-auto}"
+          echo "INFO: checkpoint_username=$CHECKPOINT_USERNAME"
+          echo "INFO: output_base_input=${OUTPUT_BASE_INPUT:-auto}"
+          echo "INFO: checkpoint_output_base=$CHECKPOINT_OUTPUT_BASE"
+
+          RUN_LOG="$(mktemp)"
+          trap 'rm -f "$RUN_LOG"' EXIT
+
+          python3 -u generate_checkpoint.py \
+            --input-path "$INPUT_PATH" \
+            --interval "$INTERVAL" \
+            --max-workers "$MAX_WORKERS" \
+            "${EXTRA_ARGS[@]}" | tee "$RUN_LOG"
+
+          ACTUAL_ARCHIVE_ID="$(sed -n 's/^Archive: //p' "$RUN_LOG" | tail -n 1)"
+          ACTUAL_ARCHIVE_ROOT="$(sed -n 's/^Archive root: //p' "$RUN_LOG" | tail -n 1)"
+
+          {
+            echo "## Checkpoint Result"
+            echo ""
+            echo "- input_path: \`$INPUT_PATH\`"
+            echo "- input_kind: \`$INPUT_KIND\`"
+            echo "- name: \`${WORKLOAD_NAME:-auto}\`"
+            echo "- interval: \`$INTERVAL\`"
+            echo "- max_k: \`${MAX_K_INPUT:-auto}\`"
+            echo "- max_workers: \`$MAX_WORKERS\`"
+            echo "- nemu: \`$NEMU_INPUT\`"
+            echo "- nemu_mode: \`$NEMU_MODE\`"
+            echo "- nemu_home: \`$NEMU_HOME\`"
+            echo "- resume_after: \`${RESUME_AFTER:-fresh}\`"
+            echo "- archive_id: \`${ACTUAL_ARCHIVE_ID:-${ARCHIVE_ID_INPUT:-auto}}\`"
+            echo "- output_base: \`${CHECKPOINT_OUTPUT_BASE}\`"
+            echo "- archive_root: \`${ACTUAL_ARCHIVE_ROOT:-$CHECKPOINT_OUTPUT_BASE}\`"
+            echo "- checkpoint_username: \`$CHECKPOINT_USERNAME\`"
+          } >> "$GITHUB_STEP_SUMMARY"
