@@ -64,13 +64,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          ENV_SCRIPT="/nfs/home/share/workload_env/env.sh"
-          if [[ ! -r "$ENV_SCRIPT" ]]; then
-            echo "ERROR: missing environment script: $ENV_SCRIPT"
-            exit 1
-          fi
-          source "$ENV_SCRIPT"
-
           RUNNER_USERNAME="$(id -un)"
           OUTPUT_BASE_INPUT="${{ github.event.inputs.output_base }}"
           CHECKPOINT_USERNAME="$RUNNER_USERNAME"
