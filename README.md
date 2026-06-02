@@ -6,6 +6,7 @@ MinJie Playground developed by [XiangShan team](https://github.com/OpenXiangShan
 
 | Flow | Doc Index |
 |------|------|
+| Checkpoint Scripts | [docs/checkpoint](docs/checkpoint/README.md) |
 | Fpga Difftest | [docs/FpgaDiff](docs/FpgaDiff/README.md) |
 
 ## LICENSE

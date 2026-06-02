@@ -1,0 +1,217 @@
+import argparse
+import os
+import shutil
+import subprocess
+import tempfile
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+
+
+COPY_BUFFER_SIZE = 1024 * 1024
+RESTORE_SIZE_OFFSET = 4
+RESTORE_SIZE_BYTES = 4
+
+
+@dataclass(frozen=True)
+class ReplacementSummary:
+    files: int
+    gcpt_size: int
+
+
+ProgressCallback = Callable[[str], None]
+
+
+def find_zstd() -> str:
+    zstd = shutil.which("zstd")
+    if zstd is None:
+        raise RuntimeError("zstd command not found in PATH")
+    return zstd
+
+
+def iter_checkpoint_files(checkpoint_dir: Path) -> list[Path]:
+    files = sorted(path for path in checkpoint_dir.rglob("*.zstd") if path.is_file())
+    if not files:
+        raise ValueError(f"no .zstd files found under: {checkpoint_dir}")
+    return files
+
+
+def read_restore_size(gcpt_bin: Path) -> int:
+    with gcpt_bin.open("rb") as handle:
+        header = handle.read(RESTORE_SIZE_OFFSET + RESTORE_SIZE_BYTES)
+    if len(header) < RESTORE_SIZE_OFFSET + RESTORE_SIZE_BYTES:
+        raise ValueError(f"gcpt.bin is too small to contain restore_size: {gcpt_bin}")
+
+    restore_size = int.from_bytes(
+        header[RESTORE_SIZE_OFFSET:RESTORE_SIZE_OFFSET + RESTORE_SIZE_BYTES],
+        byteorder="little",
+        signed=False,
+    )
+    if restore_size <= 0:
+        raise ValueError(f"gcpt.bin restore_size is zero: {gcpt_bin}")
+    return restore_size
+
+
+def validate_inputs(gcpt_bin: Path, checkpoint_dir: Path, output_dir: Path | None) -> int:
+    if not gcpt_bin.is_file():
+        raise FileNotFoundError(gcpt_bin)
+    if not checkpoint_dir.is_dir():
+        raise NotADirectoryError(checkpoint_dir)
+    if output_dir is None:
+        raise ValueError("output_dir is required")
+
+    checkpoint_dir_resolved = checkpoint_dir.resolve()
+    output_dir_resolved = output_dir.resolve()
+    if output_dir_resolved == checkpoint_dir_resolved:
+        raise ValueError("output_dir must be different from checkpoint_dir")
+    if checkpoint_dir_resolved in output_dir_resolved.parents:
+        raise ValueError("output_dir must not be inside checkpoint_dir")
+
+    gcpt_size = gcpt_bin.stat().st_size
+    if gcpt_size <= 0:
+        raise ValueError(f"gcpt.bin is empty: {gcpt_bin}")
+    restore_size = read_restore_size(gcpt_bin)
+    if restore_size > gcpt_size:
+        raise ValueError(
+            f"gcpt.bin restore_size exceeds file size: {gcpt_bin} ({restore_size} > {gcpt_size})"
+        )
+    return restore_size
+
+
+def run_zstd(command: list[str]) -> None:
+    try:
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"zstd command failed with exit code {exc.returncode}") from exc
+
+
+def copy_prefix(source_path: Path, target_path: Path, byte_count: int) -> None:
+    with source_path.open("rb") as source, target_path.open("r+b") as target:
+        remaining = byte_count
+        while remaining > 0:
+            chunk = source.read(min(COPY_BUFFER_SIZE, remaining))
+            if not chunk:
+                raise ValueError(
+                    f"source ended before requested prefix bytes were copied: {source_path}"
+                )
+            target.write(chunk)
+            remaining -= len(chunk)
+
+
+def rewrite_checkpoint(
+    *,
+    zstd: str,
+    gcpt_bin: Path,
+    gcpt_size: int,
+    checkpoint_file: Path,
+    target_file: Path,
+) -> None:
+    checkpoint_stat = checkpoint_file.stat()
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{target_file.name}.",
+        suffix=".work",
+        dir=target_file.parent,
+    ) as temp:
+        temp_dir = Path(temp)
+        raw_checkpoint = temp_dir / "checkpoint.raw"
+        rewritten_zstd = temp_dir / target_file.name
+
+        run_zstd([zstd, "-q", "-d", "-f", str(checkpoint_file), "-o", str(raw_checkpoint)])
+        raw_size = raw_checkpoint.stat().st_size
+        if raw_size < gcpt_size:
+            raise ValueError(
+                f"decompressed checkpoint is smaller than gcpt.bin: "
+                f"{checkpoint_file} ({raw_size} < {gcpt_size})"
+            )
+
+        copy_prefix(gcpt_bin, raw_checkpoint, gcpt_size)
+        run_zstd([zstd, "-q", "-f", str(raw_checkpoint), "-o", str(rewritten_zstd)])
+        rewritten_zstd.chmod(checkpoint_stat.st_mode & 0o777)
+        os.replace(rewritten_zstd, target_file)
+
+
+def replace_checkpoint_prefixes(
+    gcpt_bin: str | Path,
+    checkpoint_dir: str | Path,
+    *,
+    output_dir: str | Path | None = None,
+    progress: ProgressCallback | None = None,
+) -> ReplacementSummary:
+    zstd = find_zstd()
+    gcpt_bin = Path(gcpt_bin)
+    checkpoint_dir = Path(checkpoint_dir)
+    output_dir = None if output_dir is None else Path(output_dir)
+    gcpt_size = validate_inputs(gcpt_bin, checkpoint_dir, output_dir)
+    checkpoint_files = iter_checkpoint_files(checkpoint_dir)
+    total_files = len(checkpoint_files)
+
+    if progress is not None:
+        progress(f"Found checkpoint files: {total_files}")
+
+    assert output_dir is not None
+    for done_count, checkpoint_file in enumerate(checkpoint_files, start=1):
+        target_file = output_dir / checkpoint_file.relative_to(checkpoint_dir)
+        rewrite_checkpoint(
+            zstd=zstd,
+            gcpt_bin=gcpt_bin,
+            gcpt_size=gcpt_size,
+            checkpoint_file=checkpoint_file,
+            target_file=target_file,
+        )
+        if progress is not None:
+            relative_path = checkpoint_file.relative_to(checkpoint_dir)
+            progress(f"Wrote [{done_count}/{total_files}] {relative_path}")
+
+    return ReplacementSummary(
+        files=total_files,
+        gcpt_size=gcpt_size,
+    )
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Decompress every .zstd checkpoint under a directory, replace the "
+            "front of the decompressed payload with gcpt.bin, then recompress "
+            "the result into an output directory."
+        )
+    )
+    parser.add_argument(
+        "--gcpt-bin",
+        required=True,
+        help="gcpt.bin whose bytes will replace the beginning of each checkpoint payload.",
+    )
+    parser.add_argument(
+        "--checkpoint-dir",
+        required=True,
+        help="Directory containing .zstd checkpoint files to update recursively.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Directory where rewritten checkpoints are stored with the same relative paths.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+
+    def print_progress(message: str) -> None:
+        print(message, flush=True)
+
+    summary = replace_checkpoint_prefixes(
+        args.gcpt_bin,
+        args.checkpoint_dir,
+        output_dir=args.output_dir,
+        progress=print_progress,
+    )
+    print(f"Checkpoint files written: {summary.files}")
+    print(f"gcpt.bin bytes: {summary.gcpt_size}")
+    print(f"output directory: {args.output_dir}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
