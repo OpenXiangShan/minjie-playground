@@ -10,9 +10,9 @@ XiangShan / NutShell Verilog
   -> env-scripts/fpga_diff generates Vivado bitstream
   -> NEMU generates reference SO
   -> workload-builder compiles workloads
-  -> Bin2ddr generates DDR txt
+  -> Bin2ddr generates DDR txt for the JTAG fallback/debug path
   -> FPGA: write bitstream, reset cpu
-  -> fpga-host runs external DDR load command, then starts co-simulation
+  -> fpga-host loads the workload through XDMA H2C by default, then starts DiffTest
 ```
 
 ## Common Artifacts
@@ -23,7 +23,7 @@ XiangShan / NutShell Verilog
 | `build/build-log/` | Per-stage logs for `verilog`, `release`, `host`, `bit`, `nemu`, `workload` |
 | `build/run-log/` | `run_host` runtime logs |
 | `ready-to-run/<nemu-config>/` | NEMU reference SO |
-| `ready-to-run/<design>-<target>/` | Workload `.bin` and Bin2ddr `.txt` |
+| `ready-to-run/<design>-<target>/` | Workload `.bin` for H2C loading, plus Bin2ddr `.txt` for JTAG DDR loading |
 | `bitstream/<design>-<time>/` | Bitstream bundle with `.bit`, `.ltx`, and release directory |
 | `jobs/<job-id>/` | Debug notes, logs, and summaries for multi-step investigations |
 
