@@ -113,6 +113,9 @@ ls /dev/xdma0_*
 # Expected: c2h_0, h2c_0, control, user, xvc, events_0-15
 ```
 
+`fpga-host` uses `/dev/xdma0_h2c_0` for the default H2C workload load path and `/dev/xdma0_c2h_*` for DiffTest packets from FPGA to host.
+If `run_host` fails before printing `XDMA H2C queued`, verify that the H2C node exists and has write permission.
+
 ## 6. Troubleshooting
 
 ### No device nodes after driver load

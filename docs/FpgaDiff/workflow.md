@@ -72,6 +72,7 @@ build/release/latest-$DESIGN.name
 |----------|---------|-------------|
 | `FPGA_HOST_HOME` | none | Release directory used to build `fpga-host` |
 | `FPGA_HOST_ARGS` | `RELEASE=1 FPGA=1 DIFFTEST_PERFCNT=1` | Additional host build arguments |
+| `USE_XDMA_H2C` | `1` | Build `fpga-host` with XDMA H2C workload loading. Set to `0` for the legacy external JTAG DDR load path |
 
 ### Example
 
@@ -80,6 +81,9 @@ make host $DESIGN FPGA_HOST_HOME=$RELEASE_PATH
 ```
 
 Output: `$RELEASE_PATH/build/fpga-host`
+
+The default host build enables `CONFIG_USE_XDMA_H2C`, so `fpga-host` writes the workload image to DDR through `/dev/xdma0_h2c_0`.
+The legacy JTAG DDR loader is still available by rebuilding the host with `USE_XDMA_H2C=0`.
 
 ## Step 4: Generate Bitstream
 
@@ -194,6 +198,10 @@ rsync -a --delete ready-to-run/ <FPGA_REMOTE>:$REMOTE_ROOT/ready-to-run/
 | `WORKLOAD` | none | Workload directory containing `.bin` and `.txt` |
 | `DIFF` | empty | NEMU SO path for diff mode |
 | `HOST` | $FPGA_BIT_HOME/*/build/fpga-host | Explicit `fpga-host` path override |
+| `RAM_SIZE` | `2GB` | Forwarded as `--ram-size=$(RAM_SIZE)` |
+| `RANDOM_MEM` | `1` | Set to `1` to pass `--random-mem --seed=$(SEED)` |
+| `SEED` | `1234` | Random DDR initialization seed when `RANDOM_MEM=1` |
+| `RUN_HOST_ARGS` | derived from `DIFF`, `WORKLOAD`, `RAM_SIZE`, `RANDOM_MEM`, `SEED` | Full argument list passed to `fpga-host` |
 
 ### Example
 
@@ -215,9 +223,9 @@ make run_host \
 
 `run_host` auto-finds `fpga-host` under `FPGA_BIT_HOME`, picks the `.bin` and `.txt` inside `WORKLOAD`, and auto-generates `FPGA_DDR_LOAD_CMD`.
 
-### Manual Debug Path
+With `USE_XDMA_H2C=1`, the host loads that image through XDMA H2C before releasing the CPU.
 
-If you want to separate DDR load from `fpga-host`, use:
+With `USE_XDMA_H2C=0`, the host write DDR with external `FPGA_DDR_LOAD_CMD`:
 
 ```sh
 make write_jtag_ddr \
@@ -226,6 +234,11 @@ make write_jtag_ddr \
   FPGA_BIT_HOME=$BIT_ROOT \
   WORKLOAD=$REMOTE_ROOT/ready-to-run/$WORKLOAD_TAG
 ```
+
+### JTAG DDR Fallback / Debug Path
+
+`write_jtag_ddr` is kept for manual debugging and for host builds made with `USE_XDMA_H2C=0`.
+It auto-generates `FPGA_DDR_LOAD_CMD` from the Bin2ddr `.txt` file and lets `fpga-host` invoke the JTAG loader before the run.
 
 ## Next Steps
 

@@ -36,6 +36,7 @@ NUT_MILL_ARGS ?= --difftest-config $(DIFFTEST_CONFIG)
 
 DESIGN_HOME = $(if $(filter $(DESIGN),nutshell),$(NUT_HOME),$(XS_HOME))
 FPGA_HOST_HOME ?=
+USE_XDMA_H2C ?= 1
 FPGA_HOST_ARGS ?= RELEASE=1 FPGA=1 DIFFTEST_PERFCNT=1
 RELEASE_DIR ?= $(BUILD_DIR)/release
 RELEASE_SUFFIX ?= $(TIME_STAMP)
@@ -138,6 +139,9 @@ AM_CPPFLAGS  ?= -DUART16550=1
 
 HOST ?=
 DIFF ?=
+RAM_SIZE ?= 2GB
+RANDOM_MEM ?= 1
+SEED ?= 1234
 RUN_LOG ?= $(BUILD_DIR)/run-log/run-$$(date +%Y%m%d-%H%M%S).log
 
 .PHONY: help init link_difftest clean verilog release host bit write_bitstream \
@@ -232,6 +236,7 @@ host:
 	set -o pipefail; \
 	NOOP_HOME=$(FPGA_HOST_HOME) \
 	$(MAKE) -C $(FPGA_HOST_HOME)/difftest fpga-host $(FPGA_HOST_ARGS) \
+		USE_XDMA_H2C=$(USE_XDMA_H2C) \
 		2>&1 | tee $(HOST_LOG)
 
 bit:
@@ -316,6 +321,11 @@ nemu:
 	cp -f "$(NEMU_SRC_SO)" "$(NEMU_OUT_SO)" 2>&1 | tee -a $(NEMU_LOG)
 	echo "NEMU ref so copied to $(NEMU_OUT_SO)" | tee -a $(NEMU_LOG)
 
+RUN_HOST_ARGS ?= -i "$$workload_bin" \
+	$(if $(strip $(DIFF)),--diff $(call abs_path,$(DIFF)),--no-diff) \
+	$(if $(strip $(RAM_SIZE)),--ram-size=$(RAM_SIZE),) \
+	$(if $(filter 1,$(RANDOM_MEM)),--random-mem --seed=$(SEED),)
+
 run_host:
 	$(call require_var,FPGA_BIT_HOME)
 	$(call require_var,WORKLOAD)
@@ -333,11 +343,7 @@ run_host:
 			$(MAKE) -C $(FPGA_DIFF_HOME) write_jtag_ddr \
 			FPGA_BIT_HOME=$$fpga_bit_home \
 			WORKLOAD=$$workload_txt"; \
-		if [ -n "$(DIFF)" ]; then \
-			exec env FPGA_DDR_LOAD_CMD="$$ddr_load_cmd" "$$host" --diff "$(call abs_path,$(DIFF))" -i "$$workload_bin"; \
-		else \
-			exec env FPGA_DDR_LOAD_CMD="$$ddr_load_cmd" "$$host" --no-diff; \
-		fi)
+		exec env FPGA_DDR_LOAD_CMD="$$ddr_load_cmd" "$$host" $(RUN_HOST_ARGS))
 
 xiangshan nutshell xs nut:
 	@:

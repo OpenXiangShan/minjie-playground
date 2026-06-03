@@ -33,8 +33,8 @@ minjie-playground/
 | `NutShell/` | NutShell RTL. Generates Verilog for FPGA synthesis. |
 | `NEMU/` | RISC-V emulator used as the DiffTest reference model. Compiled into a `.so` shared library. |
 | `workload-builder/` | Builds Linux and AM (bare-metal) workloads with device trees, OpenSBI, and rootfs. |
-| `Bin2ddr/` | Converts a binary image into a `.txt` file for JTAG DDR initialization. |
-| `env-scripts/fpga_diff/` | Vivado project files, TCL scripts for synthesis/bitstream, and FPGA operation tools (write bitstream, write DDR, reset CPU). |
+| `Bin2ddr/` | Converts a binary image into a `.txt` file for JTAG DDR initialization. H2C runs use the workload `.bin` directly. |
+| `env-scripts/fpga_diff/` | Vivado project files, TCL scripts for synthesis/bitstream, and FPGA operation tools (write bitstream, JTAG write DDR, reset CPU). |
 
 ## Output Directories
 
@@ -44,7 +44,7 @@ minjie-playground/
 | `build/build-log/` | Per-stage logs: `verilog-*`, `release-*`, `host-*`, `bit-*`, `nemu-*`, `workload-*` |
 | `build/run-log/` | `run_host` runtime logs with timestamps |
 | `ready-to-run/<nemu-config>/` | NEMU reference SO (`riscv64-nemu-interpreter-so`) |
-| `ready-to-run/<design>-<target>/` | Workload `.bin` and Bin2ddr `.txt` |
+| `ready-to-run/<design>-<target>/` | Workload `.bin` for H2C loading, plus Bin2ddr `.txt` for JTAG DDR loading |
 | `bitstream/<design>-<time>/` | Bitstream bundle: `.bit`, `.ltx`, and the release directory used for synthesis |
 | `jobs/<job-id>/` | Debug job artifacts: plan, progress, commands, logs (see [debug-flow.md](./debug-flow.md)) |
 
