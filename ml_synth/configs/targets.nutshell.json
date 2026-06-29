@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "targets": [
+    {
+      "name": "nutshell-fpga-diff-local-build",
+      "design": "nutshell",
+      "cpu": "nutshell",
+      "flow_dir": "env-scripts/fpga_diff",
+      "core_dir_env": "NUTSHELL_BUILD_DIR",
+      "core_dir_default": "/nfs/home/fengkehan/project/minjie-playground/NutShell/build",
+      "jobs": 8,
+      "output_root": "build/ml_synth/nutshell",
+      "make_project_target": "all",
+      "make_synth_target": "synth",
+      "make_bitstream_target": "bitstream",
+      "known_current_issue": "The controlled current NutShell sample used during fpga-diff incremental experiments has a SimTop/SimTop_wrapper port mismatch. Use a release/build whose SimTop wrapper matches env-scripts/fpga_diff before claiming timing or bitstream success."
+    }
+  ]
+}

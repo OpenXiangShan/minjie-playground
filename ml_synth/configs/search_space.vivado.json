@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "description": "Initial Vivado strategy/directive candidates for MinJie FPGA synthesis DSE. Keep this list small until the trial harness has stable PPA/runtime data.",
+  "trials": [
+    {
+      "name": "repo-default",
+      "synth_strategy": "Vivado Synthesis Defaults",
+      "synth_directive": "AlternateRoutability",
+      "synth_gated_clock_conversion": "auto",
+      "synth_bufg": "52",
+      "impl_strategy": "Performance_WLBlockPlacementFanoutOpt",
+      "place_directive": "WLDrivenBlockPlacement",
+      "phys_opt_directive": "AggressiveFanoutOpt",
+      "route_directive": "Explore"
+    },
+    {
+      "name": "vivado-default",
+      "synth_strategy": "Vivado Synthesis Defaults",
+      "synth_directive": "Default",
+      "synth_gated_clock_conversion": "auto",
+      "synth_bufg": "52",
+      "impl_strategy": "Vivado Implementation Defaults",
+      "place_directive": "Default",
+      "phys_opt_directive": "Default",
+      "route_directive": "Default"
+    },
+    {
+      "name": "performance-explore",
+      "synth_strategy": "Vivado Synthesis Defaults",
+      "synth_directive": "AlternateRoutability",
+      "synth_gated_clock_conversion": "auto",
+      "synth_bufg": "52",
+      "impl_strategy": "Performance_ExplorePostRoutePhysOpt",
+      "place_directive": "Explore",
+      "phys_opt_directive": "Explore",
+      "route_directive": "Explore"
+    },
+    {
+      "name": "congestion-ssi",
+      "synth_strategy": "Flow_PerfOptimized_high",
+      "synth_directive": "Default",
+      "synth_gated_clock_conversion": "auto",
+      "synth_bufg": "52",
+      "impl_strategy": "Congestion_SSI_SpreadLogic_high",
+      "place_directive": "AltSpreadLogic_high",
+      "phys_opt_directive": "AggressiveExplore",
+      "route_directive": "AlternateCLBRouting"
+    },
+    {
+      "name": "runtime-lean",
+      "synth_strategy": "Vivado Synthesis Defaults",
+      "synth_directive": "RuntimeOptimized",
+      "synth_gated_clock_conversion": "auto",
+      "synth_bufg": "52",
+      "impl_strategy": "Vivado Implementation Defaults",
+      "place_directive": "RuntimeOptimized",
+      "phys_opt_directive": "Default",
+      "route_directive": "RuntimeOptimized"
+    }
+  ],
+  "notes": [
+    "Trial names are stable IDs for generated SUFFIX values.",
+    "Some directive values are device/Vivado-version sensitive; failed trials must stay in the dataset as negative labels.",
+    "The first pass compares fixed strategies before adding a learned model."
+  ]
+}
