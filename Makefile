@@ -139,13 +139,13 @@ AM_CPPFLAGS  ?= -DUART16550=1
 
 HOST ?=
 DIFF ?=
-RAM_SIZE ?= 2GB
+RAM_SIZE ?= $(if $(filter nutshell,$(DESIGN)),2GB,16GB)
 RANDOM_MEM ?= 1
 SEED ?= 1234
 RUN_LOG ?= $(BUILD_DIR)/run-log/run-$$(date +%Y%m%d-%H%M%S).log
 
 .PHONY: help init link_difftest clean verilog release host bit write_bitstream \
-	write_jtag_ddr reset_cpu workload nemu run_host \
+	write_jtag_flash write_jtag_ddr reset_cpu workload nemu run_host \
 	xiangshan nutshell xs nut
 
 help:
@@ -160,6 +160,7 @@ help:
 	@printf '%s\n' '  make workload xiangshan TARGET=linux/hello  # defaults to xiangshan-fpga-noAIA.dtb'
 	@printf '%s\n' '  make nemu                         build NEMU ref so into ready-to-run/<NEMU_CONFIG>/'
 	@printf '%s\n' '  make write_bitstream FPGA_BIT_HOME=...'
+	@printf '%s\n' '  make write_jtag_flash FPGA_BIT_HOME=... WORKLOAD=<bootrom.bin>'
 	@printf '%s\n' '  make write_jtag_ddr FPGA_BIT_HOME=... WORKLOAD=<workload-dir>   # manual / debug path'
 	@printf '%s\n' '  make reset_cpu FPGA_BIT_HOME=...'
 	@printf '%s\n' '  make run_host FPGA_BIT_HOME=... WORKLOAD=<workload-dir> [HOST=...] [DIFF=/path/to/nemu-so]'
@@ -273,6 +274,12 @@ bit:
 write_bitstream:
 	$(call require_var,FPGA_BIT_HOME)
 	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) write_bitstream FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
+
+write_jtag_flash:
+	$(call require_var,FPGA_BIT_HOME)
+	$(call require_var,WORKLOAD)
+	$(call remote,bootrom=$(call abs_path,$(WORKLOAD)); \
+		$(MAKE) -C $(FPGA_DIFF_HOME) write_jtag_flash FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)) WORKLOAD="$$bootrom")
 
 write_jtag_ddr:
 	$(call require_var,FPGA_BIT_HOME)

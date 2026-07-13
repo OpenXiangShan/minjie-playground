@@ -104,7 +104,10 @@ Common issues encountered during FPGA DiffTest and how to diagnose them.
 
 1. **Check which path you are using**:
    Host path: `make run_host ...`
-   UART/manual path: `stty -F /dev/ttyUSB0 ...` plus `halt_soc -> write_jtag_ddr -> reset_cpu`
+   UART/manual path: `stty -F /dev/ttyUSB0 ...` plus `halt_soc -> [write_jtag_flash] -> write_jtag_ddr -> reset_cpu`
+
+   The default host path uses H2C for workload DDR loading only.
+   If the design boots from flash, write the boot image through `write_jtag_flash` after each `write_bitstream` and before `run_host`.
 
 2. **If you are using the host path, verify the H2C load step succeeded**:
    Check the `run_host` log for `XDMA H2C queued` and `H2C load done`.
@@ -114,7 +117,8 @@ Common issues encountered during FPGA DiffTest and how to diagnose them.
 3. **Both paths should begin with `reset_cpu` after `write_bitstream`**: If the board was not reset after flashing, later symptoms can look like DDR load or host issues even when the real problem is stale FPGA state.
 
 4. **If you are using the UART/manual path, verify the order**:
-    Keep the UART terminal open, then run `halt_soc`, `write_jtag_ddr`, and `reset_cpu` in that order.
+    Keep the UART terminal open, then run `halt_soc`, optional `write_jtag_flash`, `write_jtag_ddr`, and `reset_cpu` in that order.
+    `write_jtag_flash` takes a raw boot image, must finish before the CPU is released, and must be repeated after every `write_bitstream`.
     If you skip `halt_soc` or reset too early, the CPU may run before DDR is fully initialized.
 
 5. **Verify the workload binary**: Check the file size is reasonable:
@@ -128,7 +132,7 @@ Common issues encountered during FPGA DiffTest and how to diagnose them.
 6. **Check the reset sequence**:
     `write_bitstream` is followed by an initial `reset_cpu` in both paths. After that:
     Host path: `fpga-host` random-initializes DDR if requested, then loads the workload through H2C, then releases CPU reset.
-    UART/manual path: a second `reset_cpu` should be called after `halt_soc` and `write_jtag_ddr`:
+    UART/manual path: a second `reset_cpu` should be called after `halt_soc`, any boot-flash write, and `write_jtag_ddr`:
 
     ```sh
     make reset_cpu REMOTE=fpga REMOTE_DIR=$FPGA_ROOT FPGA_BIT_HOME=$BIT_ROOT
@@ -144,7 +148,8 @@ Common issues encountered during FPGA DiffTest and how to diagnose them.
 
 9. **For Linux workloads, account for DDR outside the image**:
     Linux can read physical memory beyond the exact bytes in the workload image.
-    Prefer the default `run_host` behavior, which uses `RAM_SIZE=2GB`, `RANDOM_MEM=1`, and `SEED=1234`.
+    The bitstream defaults to the 16GB two-rank DDR configuration. `RAM_SIZE=16GB` is now the default for XiangShan `fpga-host` and NEMU runtime initialization; NutShell retains `2GB`. Set it deliberately to match the workload's intended RAM size.
+    Prefer `RANDOM_MEM=1` and `SEED=1234` for deterministic initialization.
     If random DDR initialization is disabled, pad the workload image so every region Linux may access has deterministic contents.
 
 ## 4. Packets Received Correctly but DiffTest Comparison Fails

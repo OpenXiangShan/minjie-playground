@@ -13,6 +13,7 @@ This document describes the end-to-end FPGA DiffTest flow. Each step lists optio
 - `<WORKLOAD_TAG>`: workload output directory name, typically `<DESIGN>-$(subst /,-,$(TARGET))`
 - `<REMOTE_ROOT>`: remote repository path, typically `/path/to/minjie-playground`
 - `<BIT_TAG>`: bitstream bundle directory name under `bitstream/`
+- `<BOOTRAM_BIN>`: raw boot image to stage in the JTAG boot flash
 
 ## Step 1: Generate Verilog
 
@@ -82,7 +83,7 @@ make host $DESIGN FPGA_HOST_HOME=$RELEASE_PATH
 
 Output: `$RELEASE_PATH/build/fpga-host`
 
-The default host build enables `CONFIG_USE_XDMA_H2C`, so `fpga-host` writes the workload image to DDR through `/dev/xdma0_h2c_0`.
+The default host build enables `CONFIG_USE_XDMA_H2C`, so `fpga-host` writes the workload image to DDR through `/dev/xdma0_h2c_0`. This H2C path does not program the FPGA boot flash.
 The legacy JTAG DDR loader is still available by rebuilding the host with `USE_XDMA_H2C=0`.
 
 ## Step 4: Generate Bitstream
@@ -121,6 +122,10 @@ bitstream/$BIT_TAG/*.ltx
 
 Set `CHI_DIR` only for flows that use an external CHI-interface NoC. The
 OpenLLC flow does not need `CHI_DIR`.
+
+`env-scripts/fpga_diff` defaults `DDR_RANK_WIDTH=2`, selecting the 16GB two-rank DDR configuration:
+a 34-bit DDR AXI address, the `MTA16ATF2G64HZ-2G3` memory part, and `ddr_rank1.xdc`.
+This physical DDR configuration is independent of the `RAM_SIZE` passed to `fpga-host` below.
 
 ## Step 5: Build NEMU Reference
 
@@ -198,7 +203,7 @@ rsync -a --delete ready-to-run/ <FPGA_REMOTE>:$REMOTE_ROOT/ready-to-run/
 | `WORKLOAD` | none | Workload directory containing `.bin` and `.txt` |
 | `DIFF` | empty | NEMU SO path for diff mode |
 | `HOST` | $FPGA_BIT_HOME/*/build/fpga-host | Explicit `fpga-host` path override |
-| `RAM_SIZE` | `2GB` | Forwarded as `--ram-size=$(RAM_SIZE)` |
+| `RAM_SIZE` | `16GB` for XiangShan; `2GB` for NutShell | Forwarded as `--ram-size=$(RAM_SIZE)` |
 | `RANDOM_MEM` | `1` | Set to `1` to pass `--random-mem --seed=$(SEED)` |
 | `SEED` | `1234` | Random DDR initialization seed when `RANDOM_MEM=1` |
 | `RUN_HOST_ARGS` | derived from `DIFF`, `WORKLOAD`, `RAM_SIZE`, `RANDOM_MEM`, `SEED` | Full argument list passed to `fpga-host` |
@@ -221,9 +226,9 @@ make run_host \
   DIFF=$REMOTE_ROOT/ready-to-run/$NEMU_CONFIG/riscv64-nemu-interpreter-so
 ```
 
-`run_host` auto-finds `fpga-host` under `FPGA_BIT_HOME`, picks the `.bin` and `.txt` inside `WORKLOAD`, and auto-generates `FPGA_DDR_LOAD_CMD`.
+`run_host` auto-finds `fpga-host` under `FPGA_BIT_HOME` and picks the `.bin` and `.txt` inside `WORKLOAD`.
 
-With `USE_XDMA_H2C=1`, the host loads that image through XDMA H2C before releasing the CPU.
+With `USE_XDMA_H2C=1` (the default), the host writes only the workload `.bin` to DDR through XDMA H2C before releasing the CPU. It does not write the FPGA boot flash.
 
 With `USE_XDMA_H2C=0`, the host write DDR with external `FPGA_DDR_LOAD_CMD`:
 
@@ -237,8 +242,19 @@ make write_jtag_ddr \
 
 ### JTAG DDR Fallback / Debug Path
 
-`write_jtag_ddr` is kept for manual debugging and for host builds made with `USE_XDMA_H2C=0`.
-It auto-generates `FPGA_DDR_LOAD_CMD` from the Bin2ddr `.txt` file and lets `fpga-host` invoke the JTAG loader before the run.
+`write_jtag_ddr` is kept for manual debugging and for host builds made with `USE_XDMA_H2C=0`; normal `run_host` uses H2C for DDR loading.
+
+### JTAG Boot Flash Path
+
+For designs that require a boot image in flash, write it through JTAG after every `write_bitstream`.
+
+```sh
+make write_jtag_flash \
+  REMOTE=<FPGA_REMOTE> \
+  REMOTE_DIR=$REMOTE_ROOT \
+  FPGA_BIT_HOME=$BIT_ROOT \
+  WORKLOAD=<BOOTRAM_BIN>
+```
 
 ## Next Steps
 
