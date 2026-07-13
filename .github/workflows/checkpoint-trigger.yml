@@ -162,6 +162,7 @@ jobs:
             NEMU_UPSTREAM_URL="https://github.com/OpenXiangShan/NEMU.git"
             NEMU_UPSTREAM_BRANCH="master"
             NEMU_HOME="$GITHUB_WORKSPACE/.ci-nemu-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            export NEMU_HOME
 
             echo "INFO: cloning upstream NEMU from $NEMU_UPSTREAM_URL branch=$NEMU_UPSTREAM_BRANCH"
             rm -rf "$NEMU_HOME"
