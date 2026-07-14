@@ -34,7 +34,7 @@ minjie-playground/
 | `NEMU/` | RISC-V emulator used as the DiffTest reference model. Compiled into a `.so` shared library. |
 | `workload-builder/` | Builds Linux and AM (bare-metal) workloads with device trees, OpenSBI, and rootfs. |
 | `Bin2ddr/` | Converts a binary image into a `.txt` file for JTAG DDR initialization. H2C runs use the workload `.bin` directly. |
-| `env-scripts/fpga_diff/` | Vivado project files, TCL scripts for synthesis/bitstream, and FPGA operation tools (write bitstream, JTAG write DDR, reset CPU). |
+| `env-scripts/fpga_diff/` | Vivado project files, Tcl scripts for synthesis/bitstream, and FPGA operation tools (write bitstream, halt SoC, JTAG write DDR, JTAG write flash, reset CPU). |
 
 ## Output Directories
 
@@ -52,7 +52,7 @@ minjie-playground/
 
 | File | Purpose |
 |------|---------|
-| `Makefile` | Top-level build targets (`init`, `verilog`, `release`, `host`, `bit`, `nemu`, `workload`, `write_bitstream`, `write_jtag_ddr`, `reset_cpu`, `run_host`) |
+| `Makefile` | Top-level build targets (`init`, `verilog`, `release`, `host`, `bit`, `nemu`, `workload`, `write_bitstream`, `write_jtag_flash`, `write_jtag_ddr`, `reset_cpu`, `run_host`) |
 | `build/release/latest-<design>.path` | Absolute path to the most recent release (for local use) |
 | `build/release/latest-<design>.name` | Release directory name only (for constructing remote paths) |
 | `env-scripts/fpga_diff/Makefile` | Vivado build and FPGA operation targets |

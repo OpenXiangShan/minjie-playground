@@ -11,6 +11,7 @@ XiangShan / NutShell Verilog
   -> NEMU generates reference SO
   -> workload-builder compiles workloads
   -> Bin2ddr generates DDR txt for the JTAG fallback/debug path
+  -> optional JTAG stages a raw boot image in BRAM-backed boot flash
   -> FPGA: write bitstream, reset cpu
   -> fpga-host loads the workload through XDMA H2C by default, then starts DiffTest
 ```
