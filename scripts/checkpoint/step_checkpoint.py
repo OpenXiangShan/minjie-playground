@@ -6,7 +6,9 @@ from generate_checkpoint import checkpoint_dir
 from generate_checkpoint import checkpoint_log_dir
 from generate_checkpoint import checkpoint_stage_name
 from generate_checkpoint import cluster_dir
+from generate_checkpoint import cluster_stage_name
 from generate_checkpoint import load_nemu_paths
+from generate_checkpoint import load_qemu_paths
 from generate_checkpoint import profiling_dir
 from step_metadata import cluster_weight
 
@@ -42,6 +44,36 @@ def build_checkpoint_command(*,
         str(interval),
         "--checkpoint-format",
         CHECKPOINT_FORMAT,
+    ]
+
+
+def build_qemu_checkpoint_command(*,
+                                  qemu_bin: str,
+                                  workload_bin: str,
+                                  archive_root: str,
+                                  workload: str,
+                                  interval: int,
+                                  copies: int) -> list[str]:
+    machine = (
+        f"nemu,simpoint-path={os.path.join(archive_root, cluster_stage_name())},"
+        f"workload={workload},"
+        f"cpt-interval={interval},"
+        f"output-base-dir={archive_root},"
+        f"config-name={checkpoint_stage_name()},"
+        "checkpoint-mode=SimpointCheckpoint")
+    return [
+        qemu_bin,
+        "-bios",
+        workload_bin,
+        "-M",
+        machine,
+        "-nographic",
+        "-m",
+        "8G",
+        "-smp",
+        str(copies),
+        "-cpu",
+        "rv64,v=true,vlen=128,h=false,sv39=false,sv48=true,sv57=false,sv64=false",
     ]
 
 
@@ -98,21 +130,33 @@ def run_checkpoint_step(*,
                         workload: str,
                         workload_bin: str,
                         interval: int,
+                        copies: int = 1,
                         cpu_bind: str = "0",
                         mem_bind: str = "0") -> int:
-    nemu_paths = load_nemu_paths()
     os.makedirs(checkpoint_dir(archive_root, workload), exist_ok=True)
     log_dir = checkpoint_log_dir(archive_root, workload)
     os.makedirs(log_dir, exist_ok=True)
-    command = build_checkpoint_command(
-        nemu_bin=nemu_paths.nemu,
-        workload_bin=workload_bin,
-        archive_root=archive_root,
-        workload=workload,
-        interval=interval,
-        cpu_bind=cpu_bind,
-        mem_bind=mem_bind,
-    )
+    if copies > 1:
+        qemu_paths = load_qemu_paths()
+        command = build_qemu_checkpoint_command(
+            qemu_bin=qemu_paths.qemu,
+            workload_bin=workload_bin,
+            archive_root=archive_root,
+            workload=workload,
+            interval=interval,
+            copies=copies,
+        )
+    else:
+        nemu_paths = load_nemu_paths()
+        command = build_checkpoint_command(
+            nemu_bin=nemu_paths.nemu,
+            workload_bin=workload_bin,
+            archive_root=archive_root,
+            workload=workload,
+            interval=interval,
+            cpu_bind=cpu_bind,
+            mem_bind=mem_bind,
+        )
 
     with open(os.path.join(log_dir, "checkpoint.out.log"), "w",
               encoding="utf-8") as out, open(
@@ -129,6 +173,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workload", required=True)
     parser.add_argument("--workload-bin", required=True)
     parser.add_argument("--interval", type=int, default=20_000_000)
+    parser.add_argument("--copies", type=int, default=1)
     parser.add_argument("--cpu-bind", default="0")
     parser.add_argument("--mem-bind", default="0")
     return parser
@@ -141,6 +186,7 @@ def main() -> int:
         workload=args.workload,
         workload_bin=args.workload_bin,
         interval=args.interval,
+        copies=args.copies,
         cpu_bind=args.cpu_bind,
         mem_bind=args.mem_bind,
     )

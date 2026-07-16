@@ -12,7 +12,8 @@ from generate_checkpoint import json_output_dir
 from generate_checkpoint import profiling_stage_name
 
 
-INSTRUCTION_REGEX = re.compile(r".*total guest instructions = (.*)\x1b.*")
+INSTRUCTION_REGEX = re.compile(r".*total guest instructions =\s*([0-9,]+)")
+QEMU_PLUGIN_INSTRUCTION_REGEX = re.compile(r"From plugin, all exec insn (\d+)")
 
 
 def profiling_instrs(profiling_log, spec_app, using_step_layout=False):
@@ -30,14 +31,20 @@ def profiling_instrs(profiling_log, spec_app, using_step_layout=False):
     else:
         raise FileNotFoundError(f"missing profiling log: {old_path} or {new_path}")
 
+    qemu_plugin_instrs = None
     with open(path, "r", encoding="utf-8") as handle:
         for line in handle:
-            if "total guest instructions" not in line:
-                continue
-            match = INSTRUCTION_REGEX.findall(line)
-            if not match:
-                raise ValueError(f"failed to parse instructions from {path}")
-            return match[0].replace(",", "")
+            if "total guest instructions" in line:
+                match = INSTRUCTION_REGEX.findall(line)
+                if not match:
+                    raise ValueError(f"failed to parse instructions from {path}")
+                return match[0].replace(",", "")
+
+            match = QEMU_PLUGIN_INSTRUCTION_REGEX.search(line)
+            if match:
+                qemu_plugin_instrs = match.group(1)
+    if qemu_plugin_instrs is not None:
+        return qemu_plugin_instrs
     raise ValueError(f"failed to find instructions in {path}")
 
 
