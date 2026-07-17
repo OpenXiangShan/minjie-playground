@@ -22,6 +22,13 @@ class NemuPaths:
     simpoint: str
 
 
+@dataclass(frozen=True)
+class QemuPaths:
+    home: str
+    qemu: str
+    profiling_plugin: str
+
+
 def safe_name(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in value)
 
@@ -66,6 +73,29 @@ def load_nemu_paths() -> NemuPaths:
     if missing:
         raise FileNotFoundError(
             "required runtime tool missing: " + ", ".join(missing))
+    return paths
+
+
+def load_qemu_paths() -> QemuPaths:
+    qemu_home = require_env_path("QEMU_HOME")
+    paths = QemuPaths(
+        home=qemu_home,
+        qemu=os.path.join(qemu_home, "build", "qemu-system-riscv64"),
+        profiling_plugin=os.path.join(
+            qemu_home,
+            "build",
+            "contrib",
+            "plugins",
+            "libprofilingv2.so",
+        ),
+    )
+    missing = [
+        path for path in [paths.qemu, paths.profiling_plugin]
+        if not os.path.isfile(path)
+    ]
+    if missing:
+        raise FileNotFoundError(
+            "required QEMU runtime tool missing: " + ", ".join(missing))
     return paths
 
 
@@ -445,6 +475,8 @@ def validate_input_args(args) -> None:
 
     if args.max_workers < 1:
         raise ValueError("--max-workers must be at least 1")
+    if args.copies < 1:
+        raise ValueError("--copies must be at least 1")
     if args.interval <= 0:
         raise ValueError("--interval must be a positive integer")
     if args.max_k is not None and args.max_k <= 0:
@@ -503,6 +535,7 @@ def reset_stage_outputs(archive_root: str, workload: str,
 def build_single_run_args(input_path: str, workload_name: str | None,
                           archive_id: str | None, interval: int,
                           max_workers: int,
+                          copies: int,
                           max_k: int | None,
                           resume_after: str | None) -> argparse.Namespace:
     return argparse.Namespace(
@@ -511,6 +544,7 @@ def build_single_run_args(input_path: str, workload_name: str | None,
         archive_id=archive_id,
         interval=interval,
         max_workers=max_workers,
+        copies=copies,
         max_k=max_k,
         resume_after=resume_after,
     )
@@ -597,6 +631,7 @@ def run_workload(*,
                  workload_name: str,
                  archive_root: str,
                  interval: int,
+                 copies: int,
                  max_k: int | None,
                  resume_after: str | None,
                  cpu_bind: str = "0",
@@ -610,6 +645,8 @@ def run_workload(*,
     layout = build_archive_layout(archive_root)
     ensure_directories(layout.values())
     load_nemu_paths()
+    if copies > 1:
+        load_qemu_paths()
 
     effective_resume_after = resume_after
     preserve_checkpoint_workload = False
@@ -634,6 +671,7 @@ def run_workload(*,
         "name": workload_name,
         "archive_id": os.path.basename(archive_root),
         "interval": interval,
+        "copies": copies,
         "max_k": max_k,
         "resume_after": resume_after,
     }
@@ -666,6 +704,7 @@ def run_workload(*,
                 workload=workload_name,
                 workload_bin=bin_path,
                 interval=interval,
+                copies=copies,
                 cpu_bind=cpu_bind,
                 mem_bind=mem_bind,
             )
@@ -725,6 +764,7 @@ def run_workload(*,
             workload=workload_name,
             workload_bin=bin_path,
             interval=interval,
+            copies=copies,
             cpu_bind=cpu_bind,
             mem_bind=mem_bind,
         )
@@ -789,6 +829,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         type=int,
                         default=3,
                         help="Maximum parallel workloads used in directory mode")
+    parser.add_argument("--copies",
+                        type=int,
+                        default=1,
+                        help="Number of workload copies encoded in the GCPT bin")
     parser.add_argument("--resume-after",
                         choices=["profiling", "cluster", AUTO_RESUME],
                         help="Resume from a later stage")
@@ -808,6 +852,7 @@ def main() -> int:
                                   archive_id=args.archive_id,
                                   interval=args.interval,
                                   max_workers=args.max_workers,
+                                  copies=args.copies,
                                   max_k=args.max_k,
                                   resume_after=args.resume_after))
 
@@ -825,6 +870,7 @@ def main() -> int:
                 "name": entries[0]["name"],
                 "archive_id": archive_id,
                 "interval": args.interval,
+                "copies": args.copies,
                 "max_k": args.max_k,
                 "resume_after": args.resume_after,
             },
@@ -836,6 +882,7 @@ def main() -> int:
             workload_name=entries[0]["name"],
             archive_root=archive_root,
             interval=args.interval,
+            copies=args.copies,
             max_k=args.max_k,
             resume_after=args.resume_after,
         )
@@ -854,6 +901,7 @@ def main() -> int:
             "input_path": os.path.realpath(args.input_path),
             "archive_id": archive_id,
             "interval": args.interval,
+            "copies": args.copies,
             "max_k": args.max_k,
             "resume_after": args.resume_after,
             "max_workers": args.max_workers,
@@ -867,6 +915,7 @@ def main() -> int:
     print(f"Archive: {archive_id}", flush=True)
     print(f"Archive root: {archive_root}", flush=True)
     print(f"Max workers: {args.max_workers}", flush=True)
+    print(f"Copies: {args.copies}", flush=True)
     if args.max_k is not None:
         print(f"Max k override: {args.max_k}", flush=True)
     if common_suffix:
@@ -891,6 +940,7 @@ def main() -> int:
                                      workload_name=entry["name"],
                                      archive_root=archive_root,
                                      interval=args.interval,
+                                     copies=args.copies,
                                      max_k=args.max_k,
                                      resume_after=args.resume_after,
                                      cpu_bind=cpu_bind,
