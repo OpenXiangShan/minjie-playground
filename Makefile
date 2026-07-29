@@ -130,7 +130,7 @@ WORKLOAD_AM_BIN_DIR := $(WORKLOAD_HOME)/build/am-workloads/$(WORKLOAD_NAME)/pack
 WORKLOAD_OUT_DIR ?= $(READY_TO_RUN_DIR)/$(WORKLOAD_TAG)
 WORKLOAD_OUT_BIN ?= $(WORKLOAD_OUT_DIR)/$(WORKLOAD_TAG).bin
 WORKLOAD_OUT_TXT ?= $(WORKLOAD_OUT_DIR)/$(WORKLOAD_TAG).txt
-WORKLOAD_DTB ?= xiangshan-fpga-noAIA.dtb
+WORKLOAD_DTB ?= xiangshan-fpga-AIA-mem16g.dtb
 BIN2DDR_ARGS ?=
 
 # AM workload: select ARCH and CPPFLAGS based on DESIGN
@@ -157,7 +157,7 @@ help:
 	@printf '%s\n' '  make host xiangshan FPGA_HOST_HOME=...'
 	@printf '%s\n' '  make bit xiangshan                build bitstream bundle under bitstream/<design>-<time>/'
 	@printf '%s\n' '  make workload xiangshan TARGET=am/hello  build workload and generate ready-to-run/<design>-<target>'
-	@printf '%s\n' '  make workload xiangshan TARGET=linux/hello  # defaults to xiangshan-fpga-noAIA.dtb'
+	@printf '%s\n' '  make workload xiangshan TARGET=linux/hello  # defaults to xiangshan-fpga-AIA-mem16g.dtb'
 	@printf '%s\n' '  make nemu                         build NEMU ref so into ready-to-run/<NEMU_CONFIG>/'
 	@printf '%s\n' '  make write_bitstream FPGA_BIT_HOME=...'
 	@printf '%s\n' '  make write_jtag_flash FPGA_BIT_HOME=... WORKLOAD=<bootrom.bin>'
@@ -299,7 +299,7 @@ workload:
 	if [ "$(WORKLOAD_TYPE)" = "am" ]; then \
 		$(MAKE) -C $(WORKLOAD_HOME) $(TARGET) ARCH=$(AM_ARCH) CPPFLAGS="$(AM_CPPFLAGS)" -j$(JOBS) 2>&1 | tee $(WORKLOAD_LOG); \
 	else \
-		$(MAKE) -C $(WORKLOAD_HOME) $(TARGET) -j$(JOBS) 2>&1 | tee $(WORKLOAD_LOG); \
+		$(MAKE) -C $(WORKLOAD_HOME) $(TARGET) DEFAULT_DTB=$(basename $(WORKLOAD_DTB)) -j$(JOBS) 2>&1 | tee $(WORKLOAD_LOG); \
 	fi
 	set -o pipefail; src="$(WORKLOAD_BIN)"; \
 	if [ -z "$$src" ] && [ "$(WORKLOAD_TYPE)" = "linux" ]; then src="$(WORKLOAD_LINUX_BIN)"; fi; \
