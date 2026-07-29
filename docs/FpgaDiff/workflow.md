@@ -151,7 +151,7 @@ Output: `ready-to-run/$NEMU_CONFIG/riscv64-nemu-interpreter-so`
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TARGET` | `linux/hello` | Workload-builder target |
-| `WORKLOAD_DTB` | `xiangshan-fpga-noAIA.dtb` | Linux DTB used before Bin2ddr |
+| `WORKLOAD_DTB` | `xiangshan-fpga-AIA-mem16g.dtb` | Linux DTS selection and DTB used before Bin2ddr |
 | `AM_ARCH` | inferred from `DESIGN` | AM ISA/platform selection |
 
 ### Example

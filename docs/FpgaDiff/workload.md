@@ -100,11 +100,12 @@ Use one of these two policies:
 | Random-initialize DDR | Preferred for H2C FPGA runs and random-memory testing | `make run_host RANDOM_MEM=1 SEED=...` |
 | Pad the workload image | Use when random DDR initialization is intentionally disabled | Pad the `.bin` to cover every region Linux may read, then rebuild/regenerate the workload artifacts |
 
-## DTS Template: `xiangshan-fpga-noAIA.dts.in`
+## DTS Template: `xiangshan-fpga-AIA-mem16g.dts.in`
 
-For the current XiangShan FPGA flow, Linux workloads are built around `workload-builder/dts/xiangshan-fpga-noAIA.dts.in`.
+For the current XiangShan FPGA flow, Linux workloads are built around
+`workload-builder/dts/xiangshan-fpga-AIA-mem16g.dts.in`.
 
-The top-level flow uses `xiangshan-fpga-noAIA.dtb` by default:
+The top-level flow uses `xiangshan-fpga-AIA-mem16g.dtb` by default:
 
 ```sh
 make workload xiangshan TARGET=linux/hello
@@ -112,14 +113,18 @@ make workload xiangshan TARGET=linux/hello
 
 Internally, the flow:
 
-1. Builds the Linux workload image and generated DTBs
-2. Picks `workload-builder/build/linux-workloads/<workload>/dt/xiangshan-fpga-noAIA.dtb`
-3. Splices that DTB into the firmware image before running Bin2ddr
+1. Builds the Linux workload with
+   `DEFAULT_DTB=xiangshan-fpga-AIA-mem16g`
+2. Generates the matching DTS and DTB
+3. Picks `workload-builder/build/linux-workloads/<workload>/dt/xiangshan-fpga-AIA-mem16g.dtb`
+4. Splices that DTB into the firmware image before running Bin2ddr
 
 The template is intentionally FPGA-specific:
 
-- AIA is disabled
-- Linux uses the legacy CLINT + PLIC path
+- The DDR window exposes 16 GiB from `0x80000000`
+- AIA uses the Kunminghu-v2 APLIC and IMSIC address map
+- APLIC exposes 64 interrupt sources
+- CLINT remains the timer source
 - UART16550 is used as the Linux console
 
 Relevant UART16550 section from the current template:
@@ -140,7 +145,7 @@ And the console selection in `chosen`:
 
 ```dts
 chosen {
-    bootargs = "console=ttyS0,115200 earlycon loglevel=8";
+    bootargs = "console=hvc0 earlycon=sbi loglevel=8";
     stdout-path = "serial0:115200n8";
 };
 ```
@@ -150,7 +155,8 @@ chosen {
 - `reg-shift = <0x2>` means UART registers are spaced at 4-byte intervals
 - `reg-io-width = <0x4>` means Linux accesses the UART with 32-bit MMIO
 - `clock-frequency = <50000000>` must match the FPGA wrapper
-- `stdout-path` and `bootargs` route the Linux console to UART16550
+- `bootargs` routes the Linux console through the SBI HVC path
+- `stdout-path` keeps UART16550 as the firmware console
 
 If the hardware wrapper changes, update the DTS template first, then rebuild the workload.
 
@@ -159,6 +165,10 @@ If needed, you can still override the default DTB filename:
 ```sh
 make workload xiangshan TARGET=linux/hello WORKLOAD_DTB=xiangshan-fpga-noAIA.dtb
 ```
+
+The top-level Makefile removes the `.dtb` suffix and passes the same basename
+to workload-builder as `DEFAULT_DTB`, so the built DTS and the DTB spliced into
+the final image stay aligned.
 
 ## NEMU and UART16550
 
