@@ -12,6 +12,7 @@
 [submodule "env-scripts"]
 	path = env-scripts
 	url = https://github.com/OpenXiangShan/env-scripts.git
+	branch = main
 [submodule "workload-builder"]
 	path = workload-builder
 	url = https://github.com/OpenXiangShan/workload-builder.git
