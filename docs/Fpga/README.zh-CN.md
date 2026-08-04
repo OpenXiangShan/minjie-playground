@@ -9,10 +9,11 @@
 ```bash
 make verilog xiangshan \
   XS_CONFIG=KunminghuV2Config \
+  YAML_CONFIG=$PWD/docs/Fpga/openllc-512k.yml \
   XS_DEBUG_ARGS=--disable-always-basic-diff
 ```
 
-这些选项会选择 `CONFIG=KunminghuV2Config`，并关闭始终启用的基础 DiffTest 插桩。生成的顶层模块是 `XSTop`，而不是面向 DiffTest 的 `SimTop`。直到生成 Fpga 工程时才需要设置 `NO_DIFF`。
+这些选项会选择 `CONFIG=KunminghuV2Config`，通过 [openllc-512k.yml](openllc-512k.yml) 将 OpenLLC 配置为 512 KiB、1 个 bank、8 路组相联和 1024 个 set，并关闭始终启用的基础 DiffTest 插桩。生成的顶层模块是 `XSTop`，而不是面向 DiffTest 的 `SimTop`。直到生成 Fpga 工程时才需要设置 `NO_DIFF`。
 
 ## 打包 Fpga RTL
 
