@@ -17,6 +17,7 @@ ifeq ($(DESIGN),nut)
 override DESIGN := nutshell
 endif
 JOBS ?= 16
+NO_DIFF ?= 0
 
 XS_HOME := $(ROOT_DIR)/XiangShan
 NUT_HOME := $(ROOT_DIR)/NutShell
@@ -260,10 +261,11 @@ bit:
 		rm -rf "$(BIT_OUT_DIR)"; \
 		mkdir -p "$(FPGA_BUILD_LOG_DIR)" "$(BIT_OUT_DIR)")
 	$(call remote,set -o pipefail; \
-		$(MAKE) -C $(FPGA_DIFF_HOME) all CPU=$(CPU) SUFFIX="$(SUFFIX)" CORE_DIR=$(CORE_DIR) CHI_DIR=$(CHI_DIR) \
+		$(MAKE) -C $(FPGA_DIFF_HOME) all CPU=$(CPU) SUFFIX="$(SUFFIX)" CORE_DIR=$(CORE_DIR) CHI_DIR=$(CHI_DIR) NO_DIFF=$(NO_DIFF) \
 			2>&1 | tee $(BIT_LOG))
 	$(call remote,set -o pipefail; \
-		$(MAKE) -C $(FPGA_DIFF_HOME) bitstream CPU=$(CPU) SUFFIX="$(SUFFIX)" 2>&1 | tee -a $(BIT_LOG))
+		$(MAKE) -C $(FPGA_DIFF_HOME) bitstream CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
+			2>&1 | tee -a $(BIT_LOG))
 	$(call remote,set -o pipefail; \
 		release_src="$(BIT_SRC_DIR)"; \
 		find $(FPGA_DIFF_HOME)/$(PRJ_NAME) -type f \( -name "*.bit" -o -name "*.ltx" \) \
@@ -273,7 +275,7 @@ bit:
 
 write_bitstream:
 	$(call require_var,FPGA_BIT_HOME)
-	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) write_bitstream FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
+	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) write_bitstream NO_DIFF=$(NO_DIFF) FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
 
 write_jtag_flash:
 	$(call require_var,FPGA_BIT_HOME)

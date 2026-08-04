@@ -8,6 +8,7 @@ MinJie Playground developed by [XiangShan team](https://github.com/OpenXiangShan
 |------|------|
 | Checkpoint Scripts | [docs/checkpoint](docs/checkpoint/README.md) |
 | Fpga Difftest | [docs/FpgaDiff](docs/FpgaDiff/README.md) |
+| Fpga without DiffTest | [English](docs/Fpga/README.md) / [中文](docs/Fpga/README.zh-CN.md) |
 | ML Synthesis | [docs/ml-synthesis.md](docs/ml-synthesis.md) |
 
 ## LICENSE
