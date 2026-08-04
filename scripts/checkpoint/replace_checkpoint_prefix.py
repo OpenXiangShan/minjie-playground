@@ -1,4 +1,5 @@
 import argparse
+import gzip
 import os
 import shutil
 import subprocess
@@ -11,6 +12,9 @@ from pathlib import Path
 COPY_BUFFER_SIZE = 1024 * 1024
 RESTORE_SIZE_OFFSET = 4
 RESTORE_SIZE_BYTES = 4
+CHECKPOINT_SUFFIXES = (".gz", ".zstd")
+GZIP_MAGIC = b"\x1f\x8b"
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 
 
 @dataclass(frozen=True)
@@ -30,9 +34,14 @@ def find_zstd() -> str:
 
 
 def iter_checkpoint_files(checkpoint_dir: Path) -> list[Path]:
-    files = sorted(path for path in checkpoint_dir.rglob("*.zstd") if path.is_file())
+    files = sorted(
+        path for path in checkpoint_dir.rglob("*")
+        if path.is_file() and path.suffix in CHECKPOINT_SUFFIXES
+    )
     if not files:
-        raise ValueError(f"no .zstd files found under: {checkpoint_dir}")
+        raise ValueError(
+            f"no compressed checkpoint files found under: {checkpoint_dir}"
+        )
     return files
 
 
@@ -50,6 +59,16 @@ def read_restore_size(gcpt_bin: Path) -> int:
     if restore_size <= 0:
         raise ValueError(f"gcpt.bin restore_size is zero: {gcpt_bin}")
     return restore_size
+
+
+def detect_compression(checkpoint_file: Path) -> str:
+    with checkpoint_file.open("rb") as handle:
+        magic = handle.read(4)
+    if magic.startswith(GZIP_MAGIC):
+        return "gzip"
+    if magic == ZSTD_MAGIC:
+        return "zstd"
+    raise ValueError(f"unsupported checkpoint compression: {checkpoint_file}")
 
 
 def validate_inputs(gcpt_bin: Path, checkpoint_dir: Path, output_dir: Path | None) -> int:
@@ -98,9 +117,21 @@ def copy_prefix(source_path: Path, target_path: Path, byte_count: int) -> None:
             remaining -= len(chunk)
 
 
+def decompress_gzip(source_path: Path, target_path: Path) -> None:
+    with gzip.open(source_path, "rb") as source, target_path.open("wb") as target:
+        shutil.copyfileobj(source, target, length=COPY_BUFFER_SIZE)
+
+
+def compress_gzip(source_path: Path, target_path: Path) -> None:
+    with source_path.open("rb") as source, gzip.open(
+            target_path, "wb", compresslevel=6) as target:
+        shutil.copyfileobj(source, target, length=COPY_BUFFER_SIZE)
+
+
 def rewrite_checkpoint(
     *,
-    zstd: str,
+    zstd: str | None,
+    compression: str,
     gcpt_bin: Path,
     gcpt_size: int,
     checkpoint_file: Path,
@@ -115,9 +146,16 @@ def rewrite_checkpoint(
     ) as temp:
         temp_dir = Path(temp)
         raw_checkpoint = temp_dir / "checkpoint.raw"
-        rewritten_zstd = temp_dir / target_file.name
+        rewritten_checkpoint = temp_dir / target_file.name
 
-        run_zstd([zstd, "-q", "-d", "-f", str(checkpoint_file), "-o", str(raw_checkpoint)])
+        if compression == "gzip":
+            decompress_gzip(checkpoint_file, raw_checkpoint)
+        else:
+            assert zstd is not None
+            run_zstd([
+                zstd, "-q", "-d", "-f", str(checkpoint_file),
+                "-o", str(raw_checkpoint)
+            ])
         raw_size = raw_checkpoint.stat().st_size
         if raw_size < gcpt_size:
             raise ValueError(
@@ -126,9 +164,16 @@ def rewrite_checkpoint(
             )
 
         copy_prefix(gcpt_bin, raw_checkpoint, gcpt_size)
-        run_zstd([zstd, "-q", "-f", str(raw_checkpoint), "-o", str(rewritten_zstd)])
-        rewritten_zstd.chmod(checkpoint_stat.st_mode & 0o777)
-        os.replace(rewritten_zstd, target_file)
+        if compression == "gzip":
+            compress_gzip(raw_checkpoint, rewritten_checkpoint)
+        else:
+            assert zstd is not None
+            run_zstd([
+                zstd, "-q", "-f", str(raw_checkpoint),
+                "-o", str(rewritten_checkpoint)
+            ])
+        rewritten_checkpoint.chmod(checkpoint_stat.st_mode & 0o777)
+        os.replace(rewritten_checkpoint, target_file)
 
 
 def replace_checkpoint_prefixes(
@@ -138,12 +183,19 @@ def replace_checkpoint_prefixes(
     output_dir: str | Path | None = None,
     progress: ProgressCallback | None = None,
 ) -> ReplacementSummary:
-    zstd = find_zstd()
     gcpt_bin = Path(gcpt_bin)
     checkpoint_dir = Path(checkpoint_dir)
     output_dir = None if output_dir is None else Path(output_dir)
     gcpt_size = validate_inputs(gcpt_bin, checkpoint_dir, output_dir)
     checkpoint_files = iter_checkpoint_files(checkpoint_dir)
+    compression_by_path = {
+        path: detect_compression(path) for path in checkpoint_files
+    }
+    zstd = (
+        find_zstd()
+        if "zstd" in compression_by_path.values()
+        else None
+    )
     total_files = len(checkpoint_files)
 
     if progress is not None:
@@ -154,6 +206,7 @@ def replace_checkpoint_prefixes(
         target_file = output_dir / checkpoint_file.relative_to(checkpoint_dir)
         rewrite_checkpoint(
             zstd=zstd,
+            compression=compression_by_path[checkpoint_file],
             gcpt_bin=gcpt_bin,
             gcpt_size=gcpt_size,
             checkpoint_file=checkpoint_file,
@@ -172,9 +225,9 @@ def replace_checkpoint_prefixes(
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Decompress every .zstd checkpoint under a directory, replace the "
-            "front of the decompressed payload with gcpt.bin, then recompress "
-            "the result into an output directory."
+            "Decompress every .gz or .zstd checkpoint under a directory, "
+            "replace the front of the decompressed payload with gcpt.bin, "
+            "then recompress the result into an output directory."
         )
     )
     parser.add_argument(

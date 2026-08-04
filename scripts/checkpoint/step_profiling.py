@@ -7,6 +7,8 @@ from generate_checkpoint import load_nemu_paths
 from generate_checkpoint import profiling_dir
 from generate_checkpoint import profiling_log_dir
 from generate_checkpoint import profiling_stage_name
+from generate_checkpoint import QEMU_CPU
+from generate_checkpoint import resolve_qemu_memory
 
 
 CHECKPOINT_FORMAT = "zstd"
@@ -49,6 +51,7 @@ def build_qemu_profiling_command(*,
                                  workload: str,
                                  interval: int,
                                  copies: int,
+                                 qemu_memory: str,
                                  cpu_bind: str,
                                  mem_bind: str) -> list[str]:
     return [
@@ -62,11 +65,11 @@ def build_qemu_profiling_command(*,
         "nemu",
         "-nographic",
         "-m",
-        "8G",
+        qemu_memory,
         "-smp",
         str(copies),
         "-cpu",
-        "rv64,v=true,vlen=128,h=false,sv39=false,sv48=true,sv57=false,sv64=false",
+        QEMU_CPU,
         "-plugin",
         "{},workload={},intervals={},target={}".format(
             profiling_plugin,
@@ -83,6 +86,7 @@ def run_profiling_step(*,
                        workload_bin: str,
                        interval: int,
                        copies: int = 1,
+                       qemu_memory: str | None = None,
                        cpu_bind: str = "0",
                        mem_bind: str = "0") -> int:
     os.makedirs(profiling_dir(archive_root, workload), exist_ok=True)
@@ -101,6 +105,7 @@ def run_profiling_step(*,
             workload=workload,
             interval=interval,
             copies=copies,
+            qemu_memory=resolve_qemu_memory(workload_bin, qemu_memory),
             cpu_bind=cpu_bind,
             mem_bind=mem_bind,
         )
@@ -130,6 +135,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workload-bin", required=True)
     parser.add_argument("--interval", type=int, default=20_000_000)
     parser.add_argument("--copies", type=int, default=1)
+    parser.add_argument("--qemu-memory")
     parser.add_argument("--cpu-bind", default="0")
     parser.add_argument("--mem-bind", default="0")
     return parser
@@ -143,6 +149,7 @@ def main() -> int:
         workload_bin=args.workload_bin,
         interval=args.interval,
         copies=args.copies,
+        qemu_memory=args.qemu_memory,
         cpu_bind=args.cpu_bind,
         mem_bind=args.mem_bind,
     )

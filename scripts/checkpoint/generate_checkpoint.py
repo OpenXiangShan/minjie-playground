@@ -2,6 +2,7 @@ import argparse
 import concurrent.futures
 import os
 import shutil
+import struct
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,31 @@ AUTO_RESUME_BACKUP_SUFFIX = "auto-resume-full"
 KNOWN_WORKLOAD_SUFFIXES = (
     ".fw_payload.bin",
     ".bin",
+)
+FDT_MAGIC = 0xD00DFEED
+FDT_MAGIC_BYTES = FDT_MAGIC.to_bytes(4, byteorder="big")
+FDT_HEADER = struct.Struct(">10I")
+FDT_HEADER_SIZE = FDT_HEADER.size
+FDT_BEGIN_NODE = 1
+FDT_END_NODE = 2
+FDT_PROP = 3
+FDT_NOP = 4
+FDT_END = 9
+FDT_SCAN_CHUNK_SIZE = 1024 * 1024
+FDT_KNOWN_OFFSETS = (2 * 1024 * 1024, 1536 * 1024, 0)
+KIB = 1024
+MIB = 1024 * KIB
+GIB = 1024 * MIB
+QEMU_CPU = (
+    "rv64,zicond=true,v=true,vlen=128,h=true,sv39=true,sv48=true,"
+    "sv57=false,sv64=false,smstateen=true,sscofpmf=true,svade=true,"
+    "svinval=true,svnapot=true,svpbmt=true,zacas=true,zawrs=true,"
+    "zba=true,zbb=true,zbc=true,zbkb=true,zbkc=true,zbkx=true,zbs=true,"
+    "zca=true,zcb=true,zcmop=true,zfa=true,zfh=true,zfhmin=true,"
+    "zicntr=true,zicsr=true,zifencei=true,zihintntl=true,"
+    "zihintpause=true,zihpm=true,zimop=true,zkn=true,zknd=true,zkne=true,"
+    "zknh=true,zksed=true,zksh=true,zkt=true,zvbb=true,zvfh=true,"
+    "zvfhmin=true,zvkt=true"
 )
 
 
@@ -27,6 +53,295 @@ class QemuPaths:
     home: str
     qemu: str
     profiling_plugin: str
+
+
+def _align_fdt_offset(offset: int) -> int:
+    return (offset + 3) & ~3
+
+
+def _read_fdt_blob(handle, file_size: int, offset: int) -> bytes:
+    if offset < 0 or offset + FDT_HEADER_SIZE > file_size:
+        raise ValueError("FDT header is outside the workload bin")
+
+    handle.seek(offset)
+    header = handle.read(FDT_HEADER_SIZE)
+    if len(header) != FDT_HEADER_SIZE:
+        raise ValueError("truncated FDT header")
+
+    (magic, total_size, struct_offset, strings_offset, _, _, _, _,
+     strings_size, struct_size) = FDT_HEADER.unpack(header)
+    if magic != FDT_MAGIC:
+        raise ValueError("not an FDT header")
+    if total_size < FDT_HEADER_SIZE or offset + total_size > file_size:
+        raise ValueError("invalid FDT total size")
+    if struct_offset + struct_size > total_size:
+        raise ValueError("invalid FDT structure block")
+    if strings_offset + strings_size > total_size:
+        raise ValueError("invalid FDT strings block")
+
+    handle.seek(offset)
+    blob = handle.read(total_size)
+    if len(blob) != total_size:
+        raise ValueError("truncated FDT")
+    return blob
+
+
+def _fdt_property_name(blob: bytes, strings_offset: int, strings_size: int,
+                       name_offset: int) -> str:
+    start = strings_offset + name_offset
+    end_limit = strings_offset + strings_size
+    if start >= end_limit:
+        raise ValueError("invalid FDT property name offset")
+    end = blob.find(b"\0", start, end_limit)
+    if end < 0:
+        raise ValueError("unterminated FDT property name")
+    return blob[start:end].decode("ascii")
+
+
+def _fdt_cell_value(data: bytes, offset: int, cells: int) -> int:
+    value = 0
+    for index in range(cells):
+        value = (value << 32) | struct.unpack_from(">I", data,
+                                                    offset + index * 4)[0]
+    return value
+
+
+def _memory_size_from_reg(reg: bytes, address_cells: int, size_cells: int) -> int:
+    entry_cells = address_cells + size_cells
+    entry_size = entry_cells * 4
+    if address_cells < 1 or size_cells < 1 or len(reg) % entry_size:
+        raise ValueError("invalid memory reg property in workload DTB")
+
+    total_size = 0
+    for offset in range(0, len(reg), entry_size):
+        total_size += _fdt_cell_value(reg, offset + address_cells * 4,
+                                      size_cells)
+    if total_size < 1:
+        raise ValueError("workload DTB declares no RAM")
+    return total_size
+
+
+def _memory_size_from_fdt(blob: bytes) -> int:
+    (_, total_size, struct_offset, strings_offset, _, _, _, _, strings_size,
+     struct_size) = FDT_HEADER.unpack_from(blob)
+    if total_size != len(blob):
+        raise ValueError("inconsistent FDT size")
+
+    struct_end = struct_offset + struct_size
+    if struct_end > len(blob):
+        raise ValueError("invalid FDT structure block")
+
+    address_cells = 2
+    size_cells = 1
+    node_stack = []
+    offset = struct_offset
+    while offset < struct_end:
+        token = struct.unpack_from(">I", blob, offset)[0]
+        offset += 4
+
+        if token == FDT_BEGIN_NODE:
+            name_end = blob.find(b"\0", offset, struct_end)
+            if name_end < 0:
+                raise ValueError("unterminated FDT node name")
+            node_stack.append({
+                "name": blob[offset:name_end].decode("ascii"),
+                "properties": {},
+            })
+            offset = _align_fdt_offset(name_end + 1)
+        elif token == FDT_END_NODE:
+            if not node_stack:
+                raise ValueError("unbalanced FDT node end")
+            node = node_stack.pop()
+            properties = node["properties"]
+            is_memory = (node["name"] == "memory"
+                         or node["name"].startswith("memory@")
+                         or properties.get("device_type", b"").rstrip(b"\0")
+                         == b"memory")
+            if is_memory and "reg" in properties:
+                return _memory_size_from_reg(properties["reg"], address_cells,
+                                             size_cells)
+        elif token == FDT_PROP:
+            if not node_stack or offset + 8 > struct_end:
+                raise ValueError("invalid FDT property")
+            value_size, name_offset = struct.unpack_from(">II", blob, offset)
+            offset += 8
+            value_end = offset + value_size
+            if value_end > struct_end:
+                raise ValueError("truncated FDT property value")
+            property_name = _fdt_property_name(blob, strings_offset,
+                                                strings_size, name_offset)
+            value = blob[offset:value_end]
+            offset = _align_fdt_offset(value_end)
+            node_stack[-1]["properties"][property_name] = value
+            if len(node_stack) == 1 and property_name == "#address-cells":
+                if len(value) != 4:
+                    raise ValueError("invalid FDT address cell count")
+                address_cells = struct.unpack(">I", value)[0]
+            elif len(node_stack) == 1 and property_name == "#size-cells":
+                if len(value) != 4:
+                    raise ValueError("invalid FDT size cell count")
+                size_cells = struct.unpack(">I", value)[0]
+        elif token == FDT_NOP:
+            continue
+        elif token == FDT_END:
+            break
+        else:
+            raise ValueError(f"unknown FDT token: {token}")
+
+    raise ValueError("workload DTB has no memory node")
+
+
+def _hart_count_from_fdt(blob: bytes) -> int:
+    (_, total_size, struct_offset, strings_offset, _, _, _, _, strings_size,
+     struct_size) = FDT_HEADER.unpack_from(blob)
+    if total_size != len(blob):
+        raise ValueError("inconsistent FDT size")
+
+    struct_end = struct_offset + struct_size
+    if struct_end > len(blob):
+        raise ValueError("invalid FDT structure block")
+
+    node_stack = []
+    hart_count = 0
+    offset = struct_offset
+    while offset < struct_end:
+        token = struct.unpack_from(">I", blob, offset)[0]
+        offset += 4
+
+        if token == FDT_BEGIN_NODE:
+            name_end = blob.find(b"\0", offset, struct_end)
+            if name_end < 0:
+                raise ValueError("unterminated FDT node name")
+            node_stack.append({
+                "name": blob[offset:name_end].decode("ascii"),
+                "properties": {},
+            })
+            offset = _align_fdt_offset(name_end + 1)
+        elif token == FDT_END_NODE:
+            if not node_stack:
+                raise ValueError("unbalanced FDT node end")
+            node = node_stack.pop()
+            parent_name = node_stack[-1]["name"] if node_stack else ""
+            properties = node["properties"]
+            device_type = properties.get("device_type", b"").rstrip(b"\0")
+            status = properties.get("status", b"okay\0").rstrip(b"\0")
+            if (parent_name == "cpus"
+                    and (node["name"] == "cpu"
+                         or node["name"].startswith("cpu@")
+                         or device_type == b"cpu")
+                    and status != b"disabled"):
+                hart_count += 1
+        elif token == FDT_PROP:
+            if not node_stack or offset + 8 > struct_end:
+                raise ValueError("invalid FDT property")
+            value_size, name_offset = struct.unpack_from(">II", blob, offset)
+            offset += 8
+            value_end = offset + value_size
+            if value_end > struct_end:
+                raise ValueError("truncated FDT property value")
+            property_name = _fdt_property_name(blob, strings_offset,
+                                                strings_size, name_offset)
+            if property_name in ("device_type", "status"):
+                node_stack[-1]["properties"][property_name] = blob[offset:value_end]
+            offset = _align_fdt_offset(value_end)
+        elif token == FDT_NOP:
+            continue
+        elif token == FDT_END:
+            break
+        else:
+            raise ValueError(f"unknown FDT token: {token}")
+
+    if hart_count < 1:
+        raise ValueError("workload DTB has no enabled CPU nodes")
+    return hart_count
+
+
+def _fdt_offsets(handle, file_size: int):
+    for offset in FDT_KNOWN_OFFSETS:
+        if offset < file_size:
+            yield offset
+
+    handle.seek(0)
+    prefix = b""
+    file_offset = 0
+    while True:
+        handle.seek(file_offset)
+        chunk = handle.read(FDT_SCAN_CHUNK_SIZE)
+        if not chunk:
+            return
+        data = prefix + chunk
+        start = 0
+        while True:
+            found = data.find(FDT_MAGIC_BYTES, start)
+            if found < 0:
+                break
+            yield file_offset - len(prefix) + found
+            start = found + 1
+        prefix = data[-(len(FDT_MAGIC_BYTES) - 1):]
+        file_offset += len(chunk)
+
+
+def format_qemu_memory_size(memory_bytes: int) -> str:
+    if memory_bytes < 1:
+        raise ValueError("QEMU memory size must be positive")
+    for unit, suffix in ((GIB, "G"), (MIB, "M"), (KIB, "K")):
+        if memory_bytes % unit == 0:
+            return f"{memory_bytes // unit}{suffix}"
+    return str(memory_bytes)
+
+
+def qemu_memory_from_workload_bin(workload_bin: str) -> str:
+    """Return QEMU's -m value from the workload DTB's memory node."""
+    file_size = os.path.getsize(workload_bin)
+    seen_offsets = set()
+    with open(workload_bin, "rb") as handle:
+        for offset in _fdt_offsets(handle, file_size):
+            if offset in seen_offsets:
+                continue
+            seen_offsets.add(offset)
+            try:
+                blob = _read_fdt_blob(handle, file_size, offset)
+                return format_qemu_memory_size(_memory_size_from_fdt(blob))
+            except (UnicodeDecodeError, ValueError, struct.error):
+                continue
+
+    raise ValueError(
+        "cannot determine QEMU memory from workload bin "
+        f"{workload_bin}; pass --qemu-memory explicitly (for example, 64G)")
+
+
+def workload_hart_count(workload_bin: str) -> int | None:
+    """Return enabled CPU nodes from the workload DTB when detectable."""
+    file_size = os.path.getsize(workload_bin)
+    seen_offsets = set()
+    with open(workload_bin, "rb") as handle:
+        for offset in _fdt_offsets(handle, file_size):
+            if offset in seen_offsets:
+                continue
+            seen_offsets.add(offset)
+            try:
+                blob = _read_fdt_blob(handle, file_size, offset)
+                return _hart_count_from_fdt(blob)
+            except (UnicodeDecodeError, ValueError, struct.error):
+                continue
+    return None
+
+
+def validate_workload_copies(workload_bin: str, copies: int) -> None:
+    hart_count = workload_hart_count(workload_bin)
+    if hart_count is not None and hart_count != copies:
+        raise ValueError(
+            f"workload DTB declares {hart_count} enabled harts, but --copies is "
+            f"{copies}; rerun with --copies {hart_count}")
+
+
+def resolve_qemu_memory(workload_bin: str, qemu_memory: str | None) -> str:
+    if qemu_memory is not None:
+        qemu_memory = qemu_memory.strip()
+        if not qemu_memory:
+            raise ValueError("--qemu-memory cannot be empty")
+        return qemu_memory
+    return qemu_memory_from_workload_bin(workload_bin)
 
 
 def safe_name(value: str) -> str:
@@ -536,6 +851,7 @@ def build_single_run_args(input_path: str, workload_name: str | None,
                           archive_id: str | None, interval: int,
                           max_workers: int,
                           copies: int,
+                          qemu_memory: str | None,
                           max_k: int | None,
                           resume_after: str | None) -> argparse.Namespace:
     return argparse.Namespace(
@@ -545,6 +861,7 @@ def build_single_run_args(input_path: str, workload_name: str | None,
         interval=interval,
         max_workers=max_workers,
         copies=copies,
+        qemu_memory=qemu_memory,
         max_k=max_k,
         resume_after=resume_after,
     )
@@ -634,6 +951,7 @@ def run_workload(*,
                  copies: int,
                  max_k: int | None,
                  resume_after: str | None,
+                 qemu_memory: str | None = None,
                  cpu_bind: str = "0",
                  mem_bind: str = "0",
                  metadata_dir: str | None = None,
@@ -666,12 +984,19 @@ def run_workload(*,
             archive_root, workload_name, state)
         preserve_checkpoint_workload = bool(state.get("present_points"))
 
+    validate_workload_copies(bin_path, copies)
+
+    effective_qemu_memory = None
+    if copies > 1:
+        effective_qemu_memory = resolve_qemu_memory(bin_path, qemu_memory)
+
     request = {
         "bin": os.path.realpath(bin_path),
         "name": workload_name,
         "archive_id": os.path.basename(archive_root),
         "interval": interval,
         "copies": copies,
+        "qemu_memory": effective_qemu_memory or "",
         "max_k": max_k,
         "resume_after": resume_after,
     }
@@ -705,16 +1030,19 @@ def run_workload(*,
                 workload_bin=bin_path,
                 interval=interval,
                 copies=copies,
+                qemu_memory=effective_qemu_memory,
                 cpu_bind=cpu_bind,
                 mem_bind=mem_bind,
             )
             if profiling_rc != 0:
-                print(f"Warning: profiling exited with code {profiling_rc} for {workload_name}")
-            else:
-                print(
-                    f"[Profiling] done workload={workload_name} log={profiling_log_dir(archive_root, workload_name)}",
-                    flush=True,
-                )
+                raise RuntimeError(
+                    f"profiling stage failed for {workload_name} with exit code "
+                    f"{profiling_rc}; see "
+                    f"{profiling_log_dir(archive_root, workload_name)}")
+            print(
+                f"[Profiling] done workload={workload_name} log={profiling_log_dir(archive_root, workload_name)}",
+                flush=True,
+            )
             print(
                 f"[Clustering] start workload={workload_name} cpu={cpu_bind} mem={mem_bind}",
                 flush=True,
@@ -765,17 +1093,19 @@ def run_workload(*,
             workload_bin=bin_path,
             interval=interval,
             copies=copies,
+            qemu_memory=effective_qemu_memory,
             cpu_bind=cpu_bind,
             mem_bind=mem_bind,
         )
         if checkpoint_rc != 0:
-            print(
-                f"Warning: checkpoint step exited with code {checkpoint_rc} for {workload_name}")
-        else:
-            print(
-                f"[Checkpoint] done workload={workload_name} log={checkpoint_log_dir(archive_root, workload_name)}",
-                flush=True,
-            )
+            raise RuntimeError(
+                f"checkpoint stage failed for {workload_name} with exit code "
+                f"{checkpoint_rc}; see "
+                f"{checkpoint_log_dir(archive_root, workload_name)}")
+        print(
+            f"[Checkpoint] done workload={workload_name} log={checkpoint_log_dir(archive_root, workload_name)}",
+            flush=True,
+        )
     finally:
         if resume_after == AUTO_RESUME:
             restore_auto_resume_artifacts(archive_root, workload_name)
@@ -833,6 +1163,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         type=int,
                         default=1,
                         help="Number of workload copies encoded in the GCPT bin")
+    parser.add_argument(
+        "--qemu-memory",
+        help="QEMU guest RAM for --copies > 1; defaults to the workload DTB memory size",
+    )
     parser.add_argument("--resume-after",
                         choices=["profiling", "cluster", AUTO_RESUME],
                         help="Resume from a later stage")
@@ -853,6 +1187,7 @@ def main() -> int:
                                   interval=args.interval,
                                   max_workers=args.max_workers,
                                   copies=args.copies,
+                                  qemu_memory=args.qemu_memory,
                                   max_k=args.max_k,
                                   resume_after=args.resume_after))
 
@@ -871,6 +1206,7 @@ def main() -> int:
                 "archive_id": archive_id,
                 "interval": args.interval,
                 "copies": args.copies,
+                "qemu_memory": args.qemu_memory or "auto",
                 "max_k": args.max_k,
                 "resume_after": args.resume_after,
             },
@@ -883,6 +1219,7 @@ def main() -> int:
             archive_root=archive_root,
             interval=args.interval,
             copies=args.copies,
+            qemu_memory=args.qemu_memory,
             max_k=args.max_k,
             resume_after=args.resume_after,
         )
@@ -902,6 +1239,7 @@ def main() -> int:
             "archive_id": archive_id,
             "interval": args.interval,
             "copies": args.copies,
+            "qemu_memory": args.qemu_memory or "auto",
             "max_k": args.max_k,
             "resume_after": args.resume_after,
             "max_workers": args.max_workers,
@@ -916,6 +1254,9 @@ def main() -> int:
     print(f"Archive root: {archive_root}", flush=True)
     print(f"Max workers: {args.max_workers}", flush=True)
     print(f"Copies: {args.copies}", flush=True)
+    if args.copies > 1:
+        print(f"QEMU memory: {args.qemu_memory or 'auto (from DTB)'}",
+              flush=True)
     if args.max_k is not None:
         print(f"Max k override: {args.max_k}", flush=True)
     if common_suffix:
@@ -941,6 +1282,7 @@ def main() -> int:
                                      archive_root=archive_root,
                                      interval=args.interval,
                                      copies=args.copies,
+                                     qemu_memory=args.qemu_memory,
                                      max_k=args.max_k,
                                      resume_after=args.resume_after,
                                      cpu_bind=cpu_bind,
