@@ -1,1 +1,0 @@
-L3CacheConfig: { size: 512 KB, ways: 8, inclusive: false, banks: 1 }

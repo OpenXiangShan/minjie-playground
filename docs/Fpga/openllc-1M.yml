@@ -1,0 +1,3 @@
+L2CacheConfig: { size: 512 KB, ways: 8, inclusive: true, banks: 4, tp: true, enableFlush: false }
+
+L3CacheConfig: { size: 1 MB, ways:8, inclusive: false, banks: 1 }

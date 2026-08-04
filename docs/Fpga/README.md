@@ -9,11 +9,11 @@ This flow targets XiangShan on the `kunminghu-v2` submodule revision. `NO_DIFF=1
 ```bash
 make verilog xiangshan \
   XS_CONFIG=KunminghuV2Config \
-  YAML_CONFIG=$PWD/docs/Fpga/openllc-512k.yml \
+  YAML_CONFIG=$PWD/docs/Fpga/openllc-1M.yml \
   XS_DEBUG_ARGS=--disable-always-basic-diff
 ```
 
-These options select `CONFIG=KunminghuV2Config`, apply [openllc-512k.yml](openllc-512k.yml) to configure a 512 KiB OpenLLC with one bank, eight ways, and 1024 sets, and disable the always-on basic DiffTest instrumentation. The generated top is `XSTop`, rather than the DiffTest-oriented `SimTop`. `NO_DIFF` is not needed until project generation.
+These options select `CONFIG=KunminghuV2Config`, apply [openllc-1M.yml](openllc-1M.yml) to configure a 1 MiB OpenLLC with one bank, eight ways, and 2048 sets, and disable the always-on basic DiffTest instrumentation. The generated top is `XSTop`, rather than the DiffTest-oriented `SimTop`. `NO_DIFF` is not needed until project generation.
 
 ## Package Fpga RTL
 
