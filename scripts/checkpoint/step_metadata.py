@@ -13,39 +13,46 @@ from generate_checkpoint import profiling_stage_name
 
 
 INSTRUCTION_REGEX = re.compile(r".*total guest instructions =\s*([0-9,]+)")
-QEMU_PLUGIN_INSTRUCTION_REGEX = re.compile(r"From plugin, all exec insn (\d+)")
+QEMU_PLUGIN_INSTRUCTION_REGEX = re.compile(
+    r"From plugin, all exec (?:insn|instrs) (\d+)")
 
 
 def profiling_instrs(profiling_log, spec_app, using_step_layout=False):
     new_path = os.path.join(profiling_log, spec_app, "profiling.out.log")
+    new_err_path = os.path.join(profiling_log, spec_app, "profiling.err.log")
     old_path = os.path.join(profiling_log, f"{spec_app}-out.log")
+    old_err_path = os.path.join(profiling_log, f"{spec_app}-err.log")
 
     if using_step_layout:
-        path = new_path
         if not os.path.exists(new_path):
             raise FileNotFoundError(new_path)
+        paths = [new_path, new_err_path]
     elif os.path.exists(old_path):
-        path = old_path
+        paths = [old_path, old_err_path]
     elif os.path.exists(new_path):
-        path = new_path
+        paths = [new_path, new_err_path]
     else:
         raise FileNotFoundError(f"missing profiling log: {old_path} or {new_path}")
 
     qemu_plugin_instrs = None
-    with open(path, "r", encoding="utf-8") as handle:
-        for line in handle:
-            if "total guest instructions" in line:
-                match = INSTRUCTION_REGEX.findall(line)
-                if not match:
-                    raise ValueError(f"failed to parse instructions from {path}")
-                return match[0].replace(",", "")
+    for path in paths:
+        if not os.path.exists(path):
+            continue
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                if "total guest instructions" in line:
+                    match = INSTRUCTION_REGEX.findall(line)
+                    if not match:
+                        raise ValueError(
+                            f"failed to parse instructions from {path}")
+                    return match[0].replace(",", "")
 
-            match = QEMU_PLUGIN_INSTRUCTION_REGEX.search(line)
-            if match:
-                qemu_plugin_instrs = match.group(1)
+                match = QEMU_PLUGIN_INSTRUCTION_REGEX.search(line)
+                if match:
+                    qemu_plugin_instrs = match.group(1)
     if qemu_plugin_instrs is not None:
         return qemu_plugin_instrs
-    raise ValueError(f"failed to find instructions in {path}")
+    raise ValueError(f"failed to find instructions in {' or '.join(paths)}")
 
 
 def cluster_weight(cluster_path, spec_app):

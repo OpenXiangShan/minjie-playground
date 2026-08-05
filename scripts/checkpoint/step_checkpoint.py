@@ -10,11 +10,14 @@ from generate_checkpoint import cluster_stage_name
 from generate_checkpoint import load_nemu_paths
 from generate_checkpoint import load_qemu_paths
 from generate_checkpoint import profiling_dir
+from generate_checkpoint import QEMU_CPU
+from generate_checkpoint import resolve_qemu_memory
 from step_metadata import cluster_weight
 
 
 COMPRESSED_CHECKPOINT_SUFFIXES = (".gz", ".zstd")
 CHECKPOINT_FORMAT = "zstd"
+PROCESS_TERMINATE_TIMEOUT_SECONDS = 10
 
 
 def build_checkpoint_command(*,
@@ -53,7 +56,8 @@ def build_qemu_checkpoint_command(*,
                                   archive_root: str,
                                   workload: str,
                                   interval: int,
-                                  copies: int) -> list[str]:
+                                  copies: int,
+                                  qemu_memory: str) -> list[str]:
     machine = (
         f"nemu,simpoint-path={os.path.join(archive_root, cluster_stage_name())},"
         f"workload={workload},"
@@ -69,11 +73,11 @@ def build_qemu_checkpoint_command(*,
         machine,
         "-nographic",
         "-m",
-        "8G",
+        qemu_memory,
         "-smp",
         str(copies),
         "-cpu",
-        "rv64,v=true,vlen=128,h=false,sv39=false,sv48=true,sv57=false,sv64=false",
+        QEMU_CPU,
     ]
 
 
@@ -125,12 +129,24 @@ def validate_outputs(archive_root: str, workload: str) -> None:
             + ", ".join(missing_points))
 
 
+def terminate_process(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=PROCESS_TERMINATE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
 def run_checkpoint_step(*,
                         archive_root: str,
                         workload: str,
                         workload_bin: str,
                         interval: int,
                         copies: int = 1,
+                        qemu_memory: str | None = None,
                         cpu_bind: str = "0",
                         mem_bind: str = "0") -> int:
     os.makedirs(checkpoint_dir(archive_root, workload), exist_ok=True)
@@ -145,6 +161,7 @@ def run_checkpoint_step(*,
             workload=workload,
             interval=interval,
             copies=copies,
+            qemu_memory=resolve_qemu_memory(workload_bin, qemu_memory),
         )
     else:
         nemu_paths = load_nemu_paths()
@@ -163,7 +180,11 @@ def run_checkpoint_step(*,
                   os.path.join(log_dir, "checkpoint.err.log"), "w",
                   encoding="utf-8") as err:
         proc = subprocess.Popen(command, stdout=out, stderr=err)
-        proc.wait()
+        try:
+            proc.wait()
+        except BaseException:
+            terminate_process(proc)
+            raise
     return proc.returncode
 
 
@@ -174,6 +195,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workload-bin", required=True)
     parser.add_argument("--interval", type=int, default=20_000_000)
     parser.add_argument("--copies", type=int, default=1)
+    parser.add_argument("--qemu-memory")
     parser.add_argument("--cpu-bind", default="0")
     parser.add_argument("--mem-bind", default="0")
     return parser
@@ -187,6 +209,7 @@ def main() -> int:
         workload_bin=args.workload_bin,
         interval=args.interval,
         copies=args.copies,
+        qemu_memory=args.qemu_memory,
         cpu_bind=args.cpu_bind,
         mem_bind=args.mem_bind,
     )

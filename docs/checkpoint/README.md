@@ -66,6 +66,9 @@ Common inputs:
 See [checkpoint-parameters.md](./checkpoint-parameters.md) for full parameter
 semantics and environment requirements.
 
+The GitHub Actions workflow currently runs single-core checkpoints only.
+Multi-hart runs using `--copies > 1` are supported through local usage.
+
 The workflow timeout is currently 28 days.
 
 ## Local Usage
@@ -80,6 +83,12 @@ Required environment and tools:
 - `NEMU_HOME` is set
 - `$NEMU_HOME/build/riscv64-nemu-interpreter` exists
 - `$NEMU_HOME/resource/simpoint/simpoint_repo/bin/simpoint` exists
+
+When `--copies` is greater than `1`, profiling and checkpoint generation run
+with QEMU. Set `QEMU_HOME` and make sure these files exist:
+
+- `$QEMU_HOME/build/qemu-system-riscv64`
+- `$QEMU_HOME/build/contrib/plugins/libprofilingv2.so`
 
 Single bin:
 
@@ -96,9 +105,29 @@ Multiple bins:
 python3 scripts/checkpoint/generate_checkpoint.py \
   --input-path /path/to/bin-directory \
   --interval 20000000 \
+  --copies 32 \
+  --qemu-memory 64G \
   --max-k 40 \
   --max-workers 3
 ```
+
+Multi-hart checkpoint from an existing GCPT bin:
+
+```bash
+python3 scripts/checkpoint/generate_checkpoint.py \
+  --input-path /path/to/multihart.gcpt.bin \
+  --name demo \
+  --copies 2 \
+  --archive-id demo-multihart-checkpoint
+```
+
+`--copies` records the hart count encoded in the GCPT bin. Values above `1`
+automatically use QEMU for profiling and checkpoint generation with
+`-smp <copies>`. The value must match the enabled CPU count in the embedded
+workload DTB; a mismatch is rejected before a runtime stage starts.
+
+When `--qemu-memory` is omitted, the script derives QEMU's `-m` value from the
+workload DTB. Pass `--qemu-memory` to override the detected value.
 
 Resume:
 
@@ -162,13 +191,15 @@ If checkpoint generation gets stuck immediately, the GCPT input is likely
 invalid and a correct `gcpt.bin` should be generated again.
 
 `scripts/checkpoint/replace_checkpoint_prefix.py` replaces the GCPT prefix in
-existing checkpoint files in batches. It recursively processes `*.zstd` files
-under a checkpoint directory, replaces the beginning of each decompressed
-payload with the specified `gcpt.bin`, recompresses the result into a new
-output directory, and preserves relative paths.
+existing checkpoint files in batches. It recursively processes `*.gz` and
+`*.zstd` files under a checkpoint directory, detects gzip or Zstandard from
+the file contents rather than the suffix, replaces the beginning of each
+decompressed payload with the specified `gcpt.bin`, recompresses the result
+into a new output directory, and preserves relative paths.
 
 Requirements:
-- The `zstd` command must be available in `PATH`.
+- The `zstd` command must be available in `PATH` when any input is
+  Zstandard-compressed. Gzip inputs use Python's standard library.
 - `--gcpt-bin` points to the new `gcpt.bin`.
 - `--checkpoint-dir` points to the generated checkpoint directory.
 - `--output-dir` points to the new output directory. It must not be the same as
