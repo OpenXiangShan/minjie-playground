@@ -80,6 +80,48 @@ Default naming:
 - Only meaningful in directory mode
 - Specifies how many workloads can run in parallel
 
+### `--copies`
+
+- Optional; defaults to `1`
+- Values greater than `1` select the QEMU multi-hart path
+- Must remain `1` with `--virtualized`; nested Guest vCPUs do not change the
+  outer Host hart count
+
+### `--qemu-memory`
+
+- Optional QEMU RAM override for `--copies > 1`
+- When omitted, RAM is read from the workload DTB
+- Not accepted with `--virtualized`
+
+### `--virtualized`
+
+- Enables complete ROI profiling for workload-builder virtualized payloads
+- Uses outer NEMU rather than the multi-hart QEMU path
+- Requires `--name` for a single-file input
+- Does not read workload-builder `manifest.json`
+
+### `--virtual-start-marker`
+
+- Only used with `--virtualized`
+- Defaults to `exec command:`
+- Profiling and checkpoint instruction counting begin after NEMU observes this
+  text on UART
+
+### `--virtual-stop-marker`
+
+- Only used with `--virtualized`
+- Defaults to `TEST DONE!`
+- Completes profiling after NEMU observes this text on UART
+- A run that exits without this marker is rejected as an incomplete ROI
+
+### `--virtual-max-instr`
+
+- Optional positive integer used only with `--virtualized`
+- Sets a hard limit on total outer-NEMU instructions during profiling
+- There is no default limit; the stop marker normally ends a successful run
+- The checkpoint stage calculates its own limit from the observed marker base
+  and highest SimPoint, and rejects a user limit that is too small
+
 ### `--resume-after`
 
 - Optional
@@ -95,6 +137,9 @@ Semantics:
   Skips profiling and cluster, then regenerates checkpoints
 - `auto`
   Automatically chooses the resume stage based on existing files in the archive
+
+Virtual resume additionally requires intact profiling logs containing the
+configured start marker, stop marker, marker base, and ROI instruction count.
 
 ## Automatic Naming
 
@@ -120,6 +165,12 @@ Required environment variable:
 Required files:
 - `$NEMU_HOME/build/riscv64-nemu-interpreter`
 - `$NEMU_HOME/resource/simpoint/simpoint_repo/bin/simpoint`
+
+Virtualized runs also require:
+
+- UART marker options in `$NEMU_HOME/build/riscv64-nemu-interpreter --help`
+- `$NEMU_HOME/.config` with `CONFIG_MSIZE` no smaller than the payload's Host
+  DTB memory size
 
 ## Output Directories
 

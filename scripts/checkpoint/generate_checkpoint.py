@@ -7,6 +7,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from virtual_checkpoint import DEFAULT_START_MARKER
+from virtual_checkpoint import DEFAULT_STOP_MARKER
+from virtual_checkpoint import parse_virtual_profiling_logs
+from virtual_checkpoint import validate_virtual_nemu
+from virtual_checkpoint import virtual_checkpoint_max_instr
+
 AUTO_RESUME = "auto"
 COMPLETE_STATE = "complete"
 AUTO_RESUME_BACKUP_SUFFIX = "auto-resume-full"
@@ -292,6 +298,17 @@ def format_qemu_memory_size(memory_bytes: int) -> str:
 
 def qemu_memory_from_workload_bin(workload_bin: str) -> str:
     """Return QEMU's -m value from the workload DTB's memory node."""
+    try:
+        memory_bytes = workload_memory_size(workload_bin)
+    except ValueError as exc:
+        raise ValueError(
+            f"{exc}; pass --qemu-memory explicitly (for example, 64G)"
+        ) from exc
+    return format_qemu_memory_size(memory_bytes)
+
+
+def workload_memory_size(workload_bin: str) -> int:
+    """Return RAM bytes from the first valid workload DTB."""
     file_size = os.path.getsize(workload_bin)
     seen_offsets = set()
     with open(workload_bin, "rb") as handle:
@@ -301,13 +318,11 @@ def qemu_memory_from_workload_bin(workload_bin: str) -> str:
             seen_offsets.add(offset)
             try:
                 blob = _read_fdt_blob(handle, file_size, offset)
-                return format_qemu_memory_size(_memory_size_from_fdt(blob))
+                return _memory_size_from_fdt(blob)
             except (UnicodeDecodeError, ValueError, struct.error):
                 continue
 
-    raise ValueError(
-        "cannot determine QEMU memory from workload bin "
-        f"{workload_bin}; pass --qemu-memory explicitly (for example, 64G)")
+    raise ValueError(f"cannot determine memory from workload DTB: {workload_bin}")
 
 
 def workload_hart_count(workload_bin: str) -> int | None:
@@ -412,6 +427,23 @@ def load_qemu_paths() -> QemuPaths:
         raise FileNotFoundError(
             "required QEMU runtime tool missing: " + ", ".join(missing))
     return paths
+
+
+def validate_virtual_workload(workload_bin: str) -> int:
+    hart_count = workload_hart_count(workload_bin)
+    if hart_count != 1:
+        detected = "unknown" if hart_count is None else str(hart_count)
+        raise ValueError(
+            "virtualized workloads require a one-hart outer Host DTB; "
+            f"detected {detected}"
+        )
+    nemu_paths = load_nemu_paths()
+    required_memory = workload_memory_size(workload_bin)
+    return validate_virtual_nemu(
+        nemu_paths.nemu,
+        os.path.join(nemu_paths.home, ".config"),
+        required_memory,
+    )
 
 
 def _normalize_ids(ids):
@@ -619,6 +651,19 @@ def validate_resume_artifacts(archive_root: str, workload: str,
             raise FileNotFoundError(f"required resume artifact missing: {path}")
 
 
+def load_virtual_profiling_evidence(archive_root: str, workload: str,
+                                    start_marker: str, stop_marker: str):
+    log_dir = profiling_log_dir(archive_root, workload)
+    return parse_virtual_profiling_logs(
+        [
+            os.path.join(log_dir, "profiling.out.log"),
+            os.path.join(log_dir, "profiling.err.log"),
+        ],
+        start_marker,
+        stop_marker,
+    )
+
+
 def parse_simpoint_points(simpoints_path: str) -> list[str]:
     points = []
     with open(simpoints_path, "r", encoding="utf-8") as handle:
@@ -796,6 +841,22 @@ def validate_input_args(args) -> None:
         raise ValueError("--interval must be a positive integer")
     if args.max_k is not None and args.max_k <= 0:
         raise ValueError("--max-k must be a positive integer")
+    if args.virtual_max_instr is not None and args.virtual_max_instr <= 0:
+        raise ValueError("--virtual-max-instr must be a positive integer")
+
+    if args.virtualized:
+        if args.copies != 1:
+            raise ValueError("--virtualized requires --copies 1 for the outer Host")
+        if args.qemu_memory is not None:
+            raise ValueError("--qemu-memory cannot be used with --virtualized")
+        if input_kind == "file" and args.name is None:
+            raise ValueError("--name is required for a single virtualized workload")
+        if not args.virtual_start_marker:
+            raise ValueError("--virtual-start-marker cannot be empty")
+        if not args.virtual_stop_marker:
+            raise ValueError("--virtual-stop-marker cannot be empty")
+    elif args.virtual_max_instr is not None:
+        raise ValueError("--virtual-max-instr requires --virtualized")
 
 
 def ensure_resume_logs(archive_root: str, workload: str,
@@ -853,7 +914,11 @@ def build_single_run_args(input_path: str, workload_name: str | None,
                           copies: int,
                           qemu_memory: str | None,
                           max_k: int | None,
-                          resume_after: str | None) -> argparse.Namespace:
+                          resume_after: str | None,
+                          virtualized: bool = False,
+                          virtual_start_marker: str = DEFAULT_START_MARKER,
+                          virtual_stop_marker: str = DEFAULT_STOP_MARKER,
+                          virtual_max_instr: int | None = None) -> argparse.Namespace:
     return argparse.Namespace(
         input_path=input_path,
         name=workload_name,
@@ -864,6 +929,10 @@ def build_single_run_args(input_path: str, workload_name: str | None,
         qemu_memory=qemu_memory,
         max_k=max_k,
         resume_after=resume_after,
+        virtualized=virtualized,
+        virtual_start_marker=virtual_start_marker,
+        virtual_stop_marker=virtual_stop_marker,
+        virtual_max_instr=virtual_max_instr,
     )
 
 
@@ -955,7 +1024,11 @@ def run_workload(*,
                  cpu_bind: str = "0",
                  mem_bind: str = "0",
                  metadata_dir: str | None = None,
-                 generate_metadata: bool = True) -> dict[str, str | int]:
+                 generate_metadata: bool = True,
+                 virtualized: bool = False,
+                 virtual_start_marker: str = DEFAULT_START_MARKER,
+                 virtual_stop_marker: str = DEFAULT_STOP_MARKER,
+                 virtual_max_instr: int | None = None) -> dict[str, str | int]:
     from step_checkpoint import run_checkpoint_step
     from step_profiling import run_profiling_step
     from step_cluster import run_cluster_step
@@ -966,11 +1039,23 @@ def run_workload(*,
     if copies > 1:
         load_qemu_paths()
 
+    validate_workload_copies(bin_path, copies)
+    virtual_nemu_memory = None
+    if virtualized:
+        virtual_nemu_memory = validate_virtual_workload(bin_path)
+
     effective_resume_after = resume_after
     preserve_checkpoint_workload = False
     if resume_after == AUTO_RESUME:
         state = detect_auto_resume_state(archive_root, workload_name)
         if state["skip"]:
+            if virtualized:
+                load_virtual_profiling_evidence(
+                    archive_root,
+                    workload_name,
+                    virtual_start_marker,
+                    virtual_stop_marker,
+                )
             workload_checkpoint_dir = checkpoint_dir(archive_root, workload_name)
             return {
                 "name": workload_name,
@@ -983,8 +1068,6 @@ def run_workload(*,
         effective_resume_after = prepare_auto_resume_artifacts(
             archive_root, workload_name, state)
         preserve_checkpoint_workload = bool(state.get("present_points"))
-
-    validate_workload_copies(bin_path, copies)
 
     effective_qemu_memory = None
     if copies > 1:
@@ -999,6 +1082,11 @@ def run_workload(*,
         "qemu_memory": effective_qemu_memory or "",
         "max_k": max_k,
         "resume_after": resume_after,
+        "virtualized": virtualized,
+        "virtual_start_marker": virtual_start_marker if virtualized else "",
+        "virtual_stop_marker": virtual_stop_marker if virtualized else "",
+        "virtual_max_instr": virtual_max_instr or "",
+        "virtual_nemu_memory_bytes": virtual_nemu_memory or "",
     }
     request_dir = metadata_dir or layout["metadata"]
     metadata_path = write_request_metadata(request_dir,
@@ -1016,7 +1104,17 @@ def run_workload(*,
         preserve_checkpoint_workload=preserve_checkpoint_workload,
     )
     validate_resume_artifacts(archive_root, workload_name, effective_resume_after)
-    ensure_resume_logs(archive_root, workload_name, effective_resume_after)
+    if not virtualized:
+        ensure_resume_logs(archive_root, workload_name, effective_resume_after)
+
+    virtual_evidence = None
+    if virtualized and effective_resume_after is not None:
+        virtual_evidence = load_virtual_profiling_evidence(
+            archive_root,
+            workload_name,
+            virtual_start_marker,
+            virtual_stop_marker,
+        )
 
     try:
         if effective_resume_after is None:
@@ -1033,6 +1131,10 @@ def run_workload(*,
                 qemu_memory=effective_qemu_memory,
                 cpu_bind=cpu_bind,
                 mem_bind=mem_bind,
+                virtualized=virtualized,
+                virtual_start_marker=virtual_start_marker,
+                virtual_stop_marker=virtual_stop_marker,
+                virtual_max_instr=virtual_max_instr,
             )
             if profiling_rc != 0:
                 raise RuntimeError(
@@ -1043,6 +1145,13 @@ def run_workload(*,
                 f"[Profiling] done workload={workload_name} log={profiling_log_dir(archive_root, workload_name)}",
                 flush=True,
             )
+            if virtualized:
+                virtual_evidence = load_virtual_profiling_evidence(
+                    archive_root,
+                    workload_name,
+                    virtual_start_marker,
+                    virtual_stop_marker,
+                )
             print(
                 f"[Clustering] start workload={workload_name} cpu={cpu_bind} mem={mem_bind}",
                 flush=True,
@@ -1087,6 +1196,23 @@ def run_workload(*,
                 f"[Checkpoint] start workload={workload_name} interval={interval} cpu={cpu_bind} mem={mem_bind}",
                 flush=True,
             )
+        virtual_checkpoint_limit = None
+        if virtualized:
+            if virtual_evidence is None:
+                raise RuntimeError("virtual profiling evidence was not loaded")
+            virtual_checkpoint_limit = virtual_checkpoint_max_instr(
+                virtual_evidence.marker_base,
+                os.path.join(cluster_dir(archive_root, workload_name), "simpoints0"),
+                interval,
+                virtual_max_instr,
+            )
+            request.update({
+                "virtual_marker_base": virtual_evidence.marker_base,
+                "virtual_roi_instructions": virtual_evidence.roi_instructions,
+                "virtual_checkpoint_max_instr": virtual_checkpoint_limit,
+            })
+            metadata_path = write_request_metadata(
+                request_dir, request, filename=f"{workload_name}.yaml")
         checkpoint_rc = run_checkpoint_step(
             archive_root=archive_root,
             workload=workload_name,
@@ -1096,6 +1222,11 @@ def run_workload(*,
             qemu_memory=effective_qemu_memory,
             cpu_bind=cpu_bind,
             mem_bind=mem_bind,
+            virtualized=virtualized,
+            virtual_start_marker=virtual_start_marker,
+            virtual_stop_marker=virtual_stop_marker,
+            virtual_max_instr=virtual_max_instr,
+            virtual_checkpoint_limit=virtual_checkpoint_limit,
         )
         if checkpoint_rc != 0:
             raise RuntimeError(
@@ -1167,6 +1298,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--qemu-memory",
         help="QEMU guest RAM for --copies > 1; defaults to the workload DTB memory size",
     )
+    parser.add_argument(
+        "--virtualized",
+        action="store_true",
+        help="Profile a workload-builder Host/QEMU/KVM/Guest payload by UART ROI markers",
+    )
+    parser.add_argument("--virtual-start-marker", default=DEFAULT_START_MARKER)
+    parser.add_argument("--virtual-stop-marker", default=DEFAULT_STOP_MARKER)
+    parser.add_argument(
+        "--virtual-max-instr",
+        type=int,
+        help="Optional hard outer-NEMU instruction limit for a virtualized workload",
+    )
     parser.add_argument("--resume-after",
                         choices=["profiling", "cluster", AUTO_RESUME],
                         help="Resume from a later stage")
@@ -1189,7 +1332,11 @@ def main() -> int:
                                   copies=args.copies,
                                   qemu_memory=args.qemu_memory,
                                   max_k=args.max_k,
-                                  resume_after=args.resume_after))
+                                  resume_after=args.resume_after,
+                                  virtualized=args.virtualized,
+                                  virtual_start_marker=args.virtual_start_marker,
+                                  virtual_stop_marker=args.virtual_stop_marker,
+                                  virtual_max_instr=args.virtual_max_instr))
 
     if input_mode == "file":
         archive_id = args.archive_id or generate_archive_id("file",
@@ -1209,6 +1356,10 @@ def main() -> int:
                 "qemu_memory": args.qemu_memory or "auto",
                 "max_k": args.max_k,
                 "resume_after": args.resume_after,
+                "virtualized": args.virtualized,
+                "virtual_start_marker": args.virtual_start_marker if args.virtualized else "",
+                "virtual_stop_marker": args.virtual_stop_marker if args.virtualized else "",
+                "virtual_max_instr": args.virtual_max_instr or "",
             },
         )
         print(f"Archive: {archive_id}", flush=True)
@@ -1222,6 +1373,10 @@ def main() -> int:
             qemu_memory=args.qemu_memory,
             max_k=args.max_k,
             resume_after=args.resume_after,
+            virtualized=args.virtualized,
+            virtual_start_marker=args.virtual_start_marker,
+            virtual_stop_marker=args.virtual_stop_marker,
+            virtual_max_instr=args.virtual_max_instr,
         )
         return 0
 
@@ -1245,6 +1400,10 @@ def main() -> int:
             "max_workers": args.max_workers,
             "common_suffix": common_suffix or "",
             "workloads": [entry["name"] for entry in entries],
+            "virtualized": args.virtualized,
+            "virtual_start_marker": args.virtual_start_marker if args.virtualized else "",
+            "virtual_stop_marker": args.virtual_stop_marker if args.virtualized else "",
+            "virtual_max_instr": args.virtual_max_instr or "",
         },
         filename="batch_request.yaml",
     )
@@ -1288,7 +1447,11 @@ def main() -> int:
                                      cpu_bind=cpu_bind,
                                      mem_bind=mem_bind,
                                      metadata_dir=requests_dir,
-                                     generate_metadata=False)
+                                     generate_metadata=False,
+                                     virtualized=args.virtualized,
+                                     virtual_start_marker=args.virtual_start_marker,
+                                     virtual_stop_marker=args.virtual_stop_marker,
+                                     virtual_max_instr=args.virtual_max_instr)
             future_to_entry[future] = entry
 
         for future in concurrent.futures.as_completed(future_to_entry):

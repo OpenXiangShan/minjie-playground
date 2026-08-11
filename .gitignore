@@ -7,3 +7,5 @@ worktrees/
 *.jou
 *.log
 
+archive/
+*.pyc
