@@ -15,6 +15,7 @@ from generate_checkpoint import profiling_stage_name
 INSTRUCTION_REGEX = re.compile(r".*total guest instructions =\s*([0-9,]+)")
 QEMU_PLUGIN_INSTRUCTION_REGEX = re.compile(
     r"From plugin, all exec (?:insn|instrs) (\d+)")
+ROI_INSTRUCTION_REGEX = re.compile(r"ROI dynamic instructions\s*=\s*([0-9,]+)")
 
 
 def profiling_instrs(profiling_log, spec_app, using_step_layout=False):
@@ -35,6 +36,8 @@ def profiling_instrs(profiling_log, spec_app, using_step_layout=False):
         raise FileNotFoundError(f"missing profiling log: {old_path} or {new_path}")
 
     qemu_plugin_instrs = None
+    total_guest_instrs = None
+    roi_instrs = None
     for path in paths:
         if not os.path.exists(path):
             continue
@@ -45,11 +48,19 @@ def profiling_instrs(profiling_log, spec_app, using_step_layout=False):
                     if not match:
                         raise ValueError(
                             f"failed to parse instructions from {path}")
-                    return match[0].replace(",", "")
+                    total_guest_instrs = match[0].replace(",", "")
+
+                match = ROI_INSTRUCTION_REGEX.search(line)
+                if match:
+                    roi_instrs = match.group(1).replace(",", "")
 
                 match = QEMU_PLUGIN_INSTRUCTION_REGEX.search(line)
                 if match:
                     qemu_plugin_instrs = match.group(1)
+    if roi_instrs is not None:
+        return roi_instrs
+    if total_guest_instrs is not None:
+        return total_guest_instrs
     if qemu_plugin_instrs is not None:
         return qemu_plugin_instrs
     raise ValueError(f"failed to find instructions in {' or '.join(paths)}")

@@ -1,6 +1,7 @@
 # Checkpoint Scripts
 
-This directory generates checkpoints from GCPT-bootable bin files.
+This directory generates checkpoints from GCPT-bootable bin files, including
+workload-builder virtualized Host/QEMU/KVM/Guest payloads.
 
 Inputs can be:
 - A single bin file
@@ -66,8 +67,9 @@ Common inputs:
 See [checkpoint-parameters.md](./checkpoint-parameters.md) for full parameter
 semantics and environment requirements.
 
-The GitHub Actions workflow currently runs single-core checkpoints only.
+The GitHub Actions workflow currently runs native single-core checkpoints only.
 Multi-hart runs using `--copies > 1` are supported through local usage.
+Virtualized ROI runs using `--virtualized` are also local-only.
 
 The workflow timeout is currently 28 days.
 
@@ -129,6 +131,45 @@ workload DTB; a mismatch is rejected before a runtime stage starts.
 When `--qemu-memory` is omitted, the script derives QEMU's `-m` value from the
 workload DTB. Pass `--qemu-memory` to override the detected value.
 
+### Virtualized workload
+
+Virtualized payloads are built separately by workload-builder with targets such
+as `make virt/linux/spec2006`. The resulting `host/fw_payload.bin` already
+contains the LibCheckpointAlpha-virt restorer and is consumed directly; this
+repository does not rebuild or modify the payload.
+
+Use a NEMU built with UART marker-gated profiling and enough memory for the
+payload's Host DTB. The validated reference is commit `4c9099dc`, configured with 16 GiB.
+
+```bash
+python3 scripts/checkpoint/generate_checkpoint.py \
+  --input-path /nfs/home/wujiabin/work/workload-builder/build/virt-linux-workloads/astar_biglakes/host/fw_payload.bin \
+  --name astar_biglakes \
+  --virtualized \
+  --archive-id astar-biglakes-virtual-checkpoint
+```
+
+Virtual mode profiles the complete ROI between the default UART markers
+`exec command:` and `TEST DONE!`. `--virtual-max-instr` optionally places a
+hard limit on total outer-NEMU instructions; without it, the stop marker ends
+profiling naturally. An instruction-limit exit before the stop marker is an
+error and the partial BBV is rejected.
+
+The checkpoint stage reads the observed profiling marker base and runs through
+`marker_base + (max_simpoint + 2) * interval`. It therefore does not need to
+rerun the complete workload after clustering. Custom workload wrappers may use
+`--virtual-start-marker` and `--virtual-stop-marker`.
+
+Virtual mode requirements and restrictions:
+
+- The outer Host payload must contain exactly one enabled hart.
+- `--copies` must remain `1`; nested Guest vCPUs are internal to the payload.
+- `--qemu-memory` is not accepted because profiling still runs in outer NEMU.
+- `--name` is required for a single file.
+- `NEMU_HOME/.config` must have `CONFIG_MSIZE` at least as large as the embedded
+  Host DTB memory and the NEMU `--help` output must expose both UART marker
+  options.
+
 Resume:
 
 ```bash
@@ -137,6 +178,11 @@ python3 scripts/checkpoint/generate_checkpoint.py \
   --archive-id 2026-05-17-12-00-00_bin-directory \
   --resume-after auto
 ```
+
+For virtual mode, resume from `profiling`, `cluster`, or `auto` additionally
+requires the original profiling logs. The logs provide the marker base, full
+ROI instruction count, and proof that the stop marker was reached. Missing or
+incomplete marker evidence is rejected.
 
 ## Naming Rules
 
@@ -189,6 +235,20 @@ Directory contents:
 
 If checkpoint generation gets stuck immediately, the GCPT input is likely
 invalid and a correct `gcpt.bin` should be generated again.
+
+For a virtualized workload, check the profiling logs for these messages:
+
+```text
+ROI uart marker matched: exec command:
+Start profiling. Setting inst count base to Current inst count ...
+ROI uart stop marker matched: TEST DONE!
+ROI dynamic instructions = ...
+```
+
+If the first marker is absent, verify that the workload-builder Host forwards
+Guest serial output and that `--virtual-max-instr` is large enough to reach the
+Guest. If the stop marker is absent, the Guest workload failed, hung, or hit the
+hard instruction limit; the generated BBV is intentionally not accepted.
 
 `scripts/checkpoint/replace_checkpoint_prefix.py` replaces the GCPT prefix in
 existing checkpoint files in batches. It recursively processes `*.gz` and
