@@ -3,6 +3,7 @@ import concurrent.futures
 import os
 import shutil
 import struct
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -53,6 +54,70 @@ class QemuPaths:
     home: str
     qemu: str
     profiling_plugin: str
+
+
+class WorkloadProgress:
+    """Thread-safe progress counters shared by parallel workload workers."""
+
+    def __init__(self, total: int):
+        if total < 1:
+            raise ValueError("workload total must be positive")
+        self.total = total
+        self.completed = 0
+        self.succeeded = 0
+        self.failed = 0
+        self._lock = threading.Lock()
+
+    def snapshot(self) -> dict[str, int]:
+        with self._lock:
+            return {
+                "completed": self.completed,
+                "succeeded": self.succeeded,
+                "failed": self.failed,
+                "remaining": self.total - self.completed,
+            }
+
+    def mark_success(self) -> dict[str, int]:
+        with self._lock:
+            self.completed += 1
+            self.succeeded += 1
+            return self._snapshot_unlocked()
+
+    def mark_failure(self) -> dict[str, int]:
+        with self._lock:
+            self.completed += 1
+            self.failed += 1
+            return self._snapshot_unlocked()
+
+    def _snapshot_unlocked(self) -> dict[str, int]:
+        return {
+            "completed": self.completed,
+            "succeeded": self.succeeded,
+            "failed": self.failed,
+            "remaining": self.total - self.completed,
+        }
+
+    def format(self) -> str:
+        state = self.snapshot()
+        percent = state["completed"] * 100 // self.total
+        return (f"progress={state['completed']}/{self.total} ({percent}%) "
+                f"remaining={state['remaining']}")
+
+
+def print_workload_log(message: str,
+                       progress: WorkloadProgress | None = None,
+                       *,
+                       failed: bool = False) -> None:
+    suffix = ""
+    if progress is not None:
+        state = progress.snapshot()
+        percent = state["completed"] * 100 // progress.total
+        suffix = (f" progress={state['completed']}/{progress.total} ({percent}%)"
+                  f" remaining={state['remaining']}")
+        if failed:
+            suffix += f" failed={state['failed']}"
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}{suffix}",
+          flush=True)
 
 
 def _align_fdt_offset(offset: int) -> int:
@@ -955,7 +1020,9 @@ def run_workload(*,
                  cpu_bind: str = "0",
                  mem_bind: str = "0",
                  metadata_dir: str | None = None,
-                 generate_metadata: bool = True) -> dict[str, str | int]:
+                 generate_metadata: bool = True,
+                 progress: WorkloadProgress | None = None
+                 ) -> dict[str, str | int]:
     from step_checkpoint import run_checkpoint_step
     from step_profiling import run_profiling_step
     from step_cluster import run_cluster_step
@@ -972,6 +1039,11 @@ def run_workload(*,
         state = detect_auto_resume_state(archive_root, workload_name)
         if state["skip"]:
             workload_checkpoint_dir = checkpoint_dir(archive_root, workload_name)
+            if progress is not None:
+                progress.mark_success()
+                print_workload_log(
+                    f"[Workload] skipped name={workload_name} reason=complete",
+                    progress)
             return {
                 "name": workload_name,
                 "archive_id": os.path.basename(archive_root),
@@ -1004,9 +1076,9 @@ def run_workload(*,
     metadata_path = write_request_metadata(request_dir,
                                            request,
                                            filename=f"{workload_name}.yaml")
-    print(
+    print_workload_log(
         f"[Workload] name={workload_name} archive={os.path.basename(archive_root)} input={os.path.realpath(bin_path)}",
-        flush=True,
+        progress,
     )
 
     reset_stage_outputs(
@@ -1020,9 +1092,9 @@ def run_workload(*,
 
     try:
         if effective_resume_after is None:
-            print(
+            print_workload_log(
                 f"[Profiling] start workload={workload_name} interval={interval} cpu={cpu_bind} mem={mem_bind}",
-                flush=True,
+                progress,
             )
             profiling_rc = run_profiling_step(
                 archive_root=archive_root,
@@ -1039,13 +1111,13 @@ def run_workload(*,
                     f"profiling stage failed for {workload_name} with exit code "
                     f"{profiling_rc}; see "
                     f"{profiling_log_dir(archive_root, workload_name)}")
-            print(
+            print_workload_log(
                 f"[Profiling] done workload={workload_name} log={profiling_log_dir(archive_root, workload_name)}",
-                flush=True,
+                progress,
             )
-            print(
+            print_workload_log(
                 f"[Clustering] start workload={workload_name} cpu={cpu_bind} mem={mem_bind}",
-                flush=True,
+                progress,
             )
             run_cluster_step(
                 archive_root=archive_root,
@@ -1054,14 +1126,14 @@ def run_workload(*,
                 cpu_bind=cpu_bind,
                 mem_bind=mem_bind,
             )
-            print(
+            print_workload_log(
                 f"[Clustering] done workload={workload_name} log={cluster_log_dir(archive_root, workload_name)}",
-                flush=True,
+                progress,
             )
         elif effective_resume_after == "profiling":
-            print(
+            print_workload_log(
                 f"[Clustering] resume workload={workload_name} from=profiling cpu={cpu_bind} mem={mem_bind}",
-                flush=True,
+                progress,
             )
             run_cluster_step(
                 archive_root=archive_root,
@@ -1070,22 +1142,22 @@ def run_workload(*,
                 cpu_bind=cpu_bind,
                 mem_bind=mem_bind,
             )
-            print(
+            print_workload_log(
                 f"[Clustering] done workload={workload_name} log={cluster_log_dir(archive_root, workload_name)}",
-                flush=True,
+                progress,
             )
         elif effective_resume_after != "cluster":
             raise ValueError(f"unsupported resume stage: {effective_resume_after}")
 
         if effective_resume_after == "cluster":
-            print(
+            print_workload_log(
                 f"[Checkpoint] resume workload={workload_name} from=cluster cpu={cpu_bind} mem={mem_bind}",
-                flush=True,
+                progress,
             )
         else:
-            print(
+            print_workload_log(
                 f"[Checkpoint] start workload={workload_name} interval={interval} cpu={cpu_bind} mem={mem_bind}",
-                flush=True,
+                progress,
             )
         checkpoint_rc = run_checkpoint_step(
             archive_root=archive_root,
@@ -1102,9 +1174,9 @@ def run_workload(*,
                 f"checkpoint stage failed for {workload_name} with exit code "
                 f"{checkpoint_rc}; see "
                 f"{checkpoint_log_dir(archive_root, workload_name)}")
-        print(
+        print_workload_log(
             f"[Checkpoint] done workload={workload_name} log={checkpoint_log_dir(archive_root, workload_name)}",
-            flush=True,
+            progress,
         )
     finally:
         if resume_after == AUTO_RESUME:
@@ -1112,7 +1184,7 @@ def run_workload(*,
 
     validate_outputs(archive_root, workload_name)
     if generate_metadata:
-        print(f"[Metadata] start workload={workload_name}", flush=True)
+        print_workload_log(f"[Metadata] start workload={workload_name}", progress)
         clear_aggregate_metadata(archive_root)
         generate_checkpoint_metadata(
             archive_root=archive_root,
@@ -1120,18 +1192,21 @@ def run_workload(*,
             times=[1, 1, 1],
             ids=[0, 0, 0],
         )
-        print(f"[Metadata] done workload={workload_name}", flush=True)
+        print_workload_log(f"[Metadata] done workload={workload_name}", progress)
 
     workload_checkpoint_dir = checkpoint_dir(archive_root, workload_name)
-    print(
-        f"[Workload] done name={workload_name} checkpoints={count_checkpoints(archive_root, workload_name)} dir={workload_checkpoint_dir}",
-        flush=True,
+    checkpoint_count = count_checkpoints(archive_root, workload_name)
+    if progress is not None:
+        progress.mark_success()
+    print_workload_log(
+        f"[Workload] done name={workload_name} checkpoints={checkpoint_count} dir={workload_checkpoint_dir}",
+        progress,
     )
     return {
         "name": workload_name,
         "archive_id": os.path.basename(archive_root),
         "archive_root": archive_root,
-        "checkpoint_count": count_checkpoints(archive_root, workload_name),
+        "checkpoint_count": checkpoint_count,
         "checkpoint_dir": workload_checkpoint_dir,
         "metadata": metadata_path,
     }
@@ -1213,16 +1288,27 @@ def main() -> int:
         )
         print(f"Archive: {archive_id}", flush=True)
         print(f"Archive root: {archive_root}", flush=True)
-        run_workload(
-            bin_path=entries[0]["bin"],
-            workload_name=entries[0]["name"],
-            archive_root=archive_root,
-            interval=args.interval,
-            copies=args.copies,
-            qemu_memory=args.qemu_memory,
-            max_k=args.max_k,
-            resume_after=args.resume_after,
-        )
+        progress = WorkloadProgress(1)
+        try:
+            run_workload(
+                bin_path=entries[0]["bin"],
+                workload_name=entries[0]["name"],
+                archive_root=archive_root,
+                interval=args.interval,
+                copies=args.copies,
+                qemu_memory=args.qemu_memory,
+                max_k=args.max_k,
+                resume_after=args.resume_after,
+                progress=progress,
+            )
+        except Exception as exc:
+            progress.mark_failure()
+            print_workload_log(
+                f"[Workload] failed name={entries[0]['name']} error={exc}",
+                progress,
+                failed=True,
+            )
+            raise
         return 0
 
     archive_id = args.archive_id or generate_archive_id("directory",
@@ -1264,6 +1350,7 @@ def main() -> int:
 
     results = []
     failures = []
+    progress = WorkloadProgress(len(entries))
     requests_dir = os.path.join(layout["metadata"], "requests")
     os.makedirs(requests_dir, exist_ok=True)
 
@@ -1272,9 +1359,9 @@ def main() -> int:
         future_to_entry = {}
         for index, entry in enumerate(entries):
             cpu_bind, mem_bind = get_worker_bindings(index)
-            print(
+            print_workload_log(
                 f"=== [{index + 1}/{len(entries)}] Checkpointing {entry['name']} from {entry['bin']} (cpu={cpu_bind}, mem={mem_bind}) ===",
-                flush=True,
+                progress,
             )
             future = executor.submit(run_workload,
                                      bin_path=entry["bin"],
@@ -1288,7 +1375,8 @@ def main() -> int:
                                      cpu_bind=cpu_bind,
                                      mem_bind=mem_bind,
                                      metadata_dir=requests_dir,
-                                     generate_metadata=False)
+                                     generate_metadata=False,
+                                     progress=progress)
             future_to_entry[future] = entry
 
         for future in concurrent.futures.as_completed(future_to_entry):
@@ -1296,29 +1384,36 @@ def main() -> int:
             try:
                 results.append(future.result())
             except Exception as exc:
-                failures.append({"name": entry["name"], "error": str(exc)})
+                progress.mark_failure()
+                failure = {"name": entry["name"], "error": str(exc)}
+                failures.append(failure)
+                print_workload_log(
+                    f"[Workload] failed name={entry['name']} error={exc}",
+                    progress,
+                    failed=True,
+                )
 
     if failures:
-        print("Batch failures:", flush=True)
+        print_workload_log("Batch failures", progress, failed=True)
         for failure in failures:
-            print(f"- {failure['name']}: {failure['error']}", flush=True)
+            print_workload_log(f"- {failure['name']}: {failure['error']}", progress)
         return 1
 
-    print("[Metadata] start workload=batch", flush=True)
+    print_workload_log("[Metadata] start workload=batch", progress)
     generate_checkpoint_metadata(
         archive_root=archive_root,
         workloads=[entry["name"] for entry in entries],
         times=[1, 1, 1],
         ids=[0, 0, 0],
     )
-    print("[Metadata] done workload=batch", flush=True)
+    print_workload_log("[Metadata] done workload=batch", progress)
 
-    print("Batch summary:", flush=True)
+    print_workload_log("Batch summary", progress)
     for result in results:
         suffix = ", skipped=complete" if result.get("skipped") else ""
-        print(
+        print_workload_log(
             f"- {result['name']}: archive={result['archive_id']}, checkpoints={result['checkpoint_count']}, dir={result['checkpoint_dir']}{suffix}",
-            flush=True,
+            progress,
         )
     return 0
 
