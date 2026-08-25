@@ -328,9 +328,14 @@ reset_cpu:
 		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
 		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
 
-runtime_status runtime_stop ila_clear:
+runtime_status runtime_stop:
 	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) $@ FPGA_BACKEND=$(FPGA_BACKEND) \
 		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF))
+
+ila_clear:
+	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) $@ FPGA_BACKEND=$(FPGA_BACKEND) \
+		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
+		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
 
 workload:
 	$(call require_design)

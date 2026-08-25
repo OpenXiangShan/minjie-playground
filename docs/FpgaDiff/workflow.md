@@ -39,7 +39,15 @@ make verilog $DESIGN
 
 Output: Verilog files under `<design>/build/`.
 
-For the XiangShan OpenLLC flow, use `XS_CONFIG=FpgaDiffKMHV2Config`.
+For the XiangShan external-LLC flow, select the matching configuration and pass
+the generator flag explicitly:
+
+```sh
+make verilog xiangshan \
+  XS_CONFIG=FpgaDiffKMHV2Config \
+  XS_DEBUG_ARGS="--difftest-config ESBIFDU --external-llc"
+```
+
 For a no-vector XiangShan build, explicitly pass `DIFFTEST_EXCLUDE=Vec`.
 
 ## Step 2: Create Release
@@ -148,6 +156,33 @@ target, which dispatches to `vivado_bitstream` or `uvhs_bitstream`. Use
 to prepare the UVHS template, IP checkpoints, and RTL file list without running
 the frontend.
 
+### XiangShan External LLC
+
+The external-LLC RTL file list must accompany the RTL generated with
+`--external-llc`. Pass it through the top-level build for either backend:
+
+```sh
+make bit xiangshan \
+  FPGA_BACKEND=<FPGA_BACKEND> \
+  RTL_INCLUDE=/path/to/external_llc.f \
+  REMOTE=<FPGA_BUILD_REMOTE> \
+  REMOTE_DIR=/path/to/minjie-playground
+```
+
+The `RTL_INCLUDE` path must be visible on the build host. For a project-only
+run inside `env-scripts`, pass the same file list explicitly:
+
+```sh
+make -C env-scripts/fpga_diff vivado_project \
+  CPU=kmh CORE_DIR="$RELEASE_PATH/build" \
+  RTL_INCLUDE=/path/to/external_llc.f
+
+# Or prepare the UVHS project without running its frontend.
+make -C env-scripts/fpga_diff uvhs_project \
+  CPU=kmh CORE_DIR="$RELEASE_PATH/build" \
+  RTL_INCLUDE=/path/to/external_llc.f
+```
+
 ## Step 5: Build NEMU Reference
 
 ### Optional Parameters
@@ -252,6 +287,28 @@ make run_host \
   FPGA_BIT_HOME=$BIT_ROOT \
   WORKLOAD=$REMOTE_ROOT/ready-to-run/$WORKLOAD_TAG \
   DIFF=$REMOTE_ROOT/ready-to-run/$NEMU_CONFIG/riscv64-nemu-interpreter-so
+```
+
+An external-LLC image also requires its boot ROM in the writable boot flash.
+After `write_bitstream`, write `<BOOTRAM_BIN>` before releasing the CPU. The
+top-level command dispatches to `vivado_write_flash` or `uvhs_write_flash`:
+
+```sh
+make write_jtag_flash \
+  FPGA_BACKEND=<FPGA_BACKEND> \
+  REMOTE=<FPGA_REMOTE> \
+  REMOTE_DIR=$REMOTE_ROOT \
+  PRJ_NAME=<PRJ_NAME> \
+  FPGA_BIT_HOME=$BIT_ROOT \
+  WORKLOAD=<BOOTRAM_BIN>
+```
+
+When working directly in `env-scripts/fpga_diff`, the corresponding commands
+are:
+
+```sh
+make vivado_write_flash WORKLOAD=<BOOTRAM_BIN>
+make uvhs_write_flash PRJ_NAME=<PRJ_NAME> WORKLOAD=<BOOTRAM_BIN>
 ```
 
 `run_host` auto-finds `fpga-host` under `FPGA_BIT_HOME` and picks the `.bin` and `.txt` inside `WORKLOAD`.
