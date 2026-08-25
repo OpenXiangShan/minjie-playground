@@ -8,6 +8,7 @@ This document describes the end-to-end FPGA DiffTest flow. Each step lists optio
 - `<XS_CONFIG>`: XiangShan config used for `make verilog xiangshan`
 - `<FPGA_BUILD_REMOTE>`: remote machine used by the selected FPGA backend
 - `<FPGA_REMOTE>`: remote FPGA host
+- `<FPGA_RUNTIME_REMOTE>`: FPGA host for Vivado, or the UVHS runtime host for UVHS
 - `<CPU>`: backend CPU name, such as `kmh` or `nutshell`
 - `<NEMU_CONFIG>`: NEMU defconfig name
 - `<TARGET>`: workload-builder target such as `linux/hello` or `am/hello`
@@ -273,17 +274,16 @@ make run_host \
 
 An external-LLC image also requires its boot ROM in the writable boot flash.
 After `write_bitstream`, write `<BOOTRAM_BIN>` before releasing the CPU. The
-backend-neutral env-scripts target selects the Vivado or UVHS implementation:
+top-level target selects the Vivado or UVHS implementation:
 
 ```sh
-make -C env-scripts/fpga_diff write_flash \
+make write_flash \
   FPGA_BACKEND=<FPGA_BACKEND> \
-  PRJ_NAME=<PRJ_NAME> \
+  REMOTE=<FPGA_RUNTIME_REMOTE> \
+  REMOTE_DIR=$REMOTE_ROOT \
   FPGA_BIT_HOME=$BIT_ROOT \
   WORKLOAD=<BOOTRAM_BIN>
 ```
-
-Run this command from the checkout on the FPGA or UVHS runtime host.
 
 `run_host` auto-finds `fpga-host` under `FPGA_BIT_HOME` and picks the `.bin` and `.txt` inside `WORKLOAD`.
 
@@ -326,14 +326,20 @@ calling the backend-neutral `env-scripts` ILA arm/upload targets. Backend
 dispatch and command construction stay inside `env-scripts`; playground only
 passes `FPGA_BACKEND` and `UVHS_RUNTIME`.
 
+The UVHS upload creates `UvData.usdb` and `UvData.vcd` under
+`env-scripts/fpga_diff/<PRJ_NAME>/runtime-work/UHD/uvhs_ila/` on the UVHS
+runtime host. The current hook prints those remote paths but does not copy the
+files back to the FPGA host or the machine that invoked `make run_host`.
+
 With `USE_XDMA_H2C=1` (the default), the host writes only the workload `.bin` to DDR through XDMA H2C before releasing the CPU. It does not write the FPGA boot flash.
 
 With `USE_XDMA_H2C=0`, the host writes DDR with external `FPGA_DDR_LOAD_CMD`:
 
 ```sh
-make -C env-scripts/fpga_diff write_ddr \
+make write_ddr \
   FPGA_BACKEND=<FPGA_BACKEND> \
-  PRJ_NAME=<PRJ_NAME> \
+  REMOTE=<FPGA_RUNTIME_REMOTE> \
+  REMOTE_DIR=$REMOTE_ROOT \
   FPGA_BIT_HOME=$BIT_ROOT \
   WORKLOAD=$REMOTE_ROOT/ready-to-run/$WORKLOAD_TAG/$WORKLOAD_TAG.txt
 ```
@@ -349,9 +355,10 @@ For designs that require a boot image in flash, write it after every
 `write_bitstream`.
 
 ```sh
-make -C env-scripts/fpga_diff write_flash \
+make write_flash \
   FPGA_BACKEND=<FPGA_BACKEND> \
-  PRJ_NAME=<PRJ_NAME> \
+  REMOTE=<FPGA_RUNTIME_REMOTE> \
+  REMOTE_DIR=$REMOTE_ROOT \
   FPGA_BIT_HOME=$BIT_ROOT \
   WORKLOAD=<BOOTRAM_BIN>
 ```
