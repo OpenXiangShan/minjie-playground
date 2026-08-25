@@ -83,7 +83,7 @@ build/release/latest-$DESIGN.name
 |----------|---------|-------------|
 | `FPGA_HOST_HOME` | none | Release directory used to build `fpga-host` |
 | `FPGA_HOST_ARGS` | `RELEASE=1 FPGA=1 DIFFTEST_PERFCNT=1` | Additional host build arguments |
-| `USE_XDMA_H2C` | `1` | Build `fpga-host` with XDMA H2C workload loading. Set to `0` for the legacy external JTAG DDR load path |
+| `USE_XDMA_H2C` | `1` | Build `fpga-host` with XDMA H2C workload loading. Set to `0` for the external DDR load hook |
 
 ### Example
 
@@ -94,7 +94,7 @@ make host $DESIGN FPGA_HOST_HOME=$RELEASE_PATH
 Output: `$RELEASE_PATH/build/fpga-host`
 
 The default host build enables `CONFIG_USE_XDMA_H2C`, so `fpga-host` writes the workload image to DDR through `/dev/xdma0_h2c_0`. This H2C path does not program the FPGA boot flash.
-The legacy JTAG DDR loader is still available by rebuilding the host with `USE_XDMA_H2C=0`.
+The external DDR loader is still available by rebuilding the host with `USE_XDMA_H2C=0`.
 
 ## Step 4: Generate Bitstream
 
@@ -141,20 +141,11 @@ With `FPGA_BACKEND=uvhs`, the same `bit` target forwards the release and
 `RTL_INCLUDE` inputs to the UVHS frontend/backend flow. The remote shell must
 already provide the vendor tool, license, template, and IP environment required
 by `env-scripts/fpga_diff`; those site-specific settings are intentionally not
-stored in this repository. The default project directories are
-`fpga_vivado_<cpu>[-<suffix>]` and `fpga_uvhs_<cpu>[-<suffix>]`. Override
-`PRJ_NAME` to give either backend a stable instance name across build and
-runtime commands. It is a directory name, not a path; use `REMOTE_DIR` or the
-env-scripts `ENV_SCRIPTS_HOME` when the parent directory must change. Names may
-contain only letters, digits, `.`, `_`, and `-`. UVHS stores its implementation
-database in that project directory rather than producing a Vivado `.bit`
-bundle.
+stored in this repository.
 
-Playground calls the backend-neutral `env-scripts/fpga_diff` `bitstream`
-target, which dispatches to `vivado_bitstream` or `uvhs_bitstream`. Use
-`make vivado_project` to create only the Vivado project, or `make uvhs_project`
-to prepare the UVHS template, IP checkpoints, and RTL file list without running
-the frontend.
+Playground uses the backend-neutral `project` and `bitstream` targets in
+`env-scripts/fpga_diff`. `make project` prepares the selected backend without
+running the complete bitstream flow.
 
 ### XiangShan External LLC
 
@@ -170,15 +161,10 @@ make bit xiangshan \
 ```
 
 The `RTL_INCLUDE` path must be visible on the build host. For a project-only
-run inside `env-scripts`, pass the same file list explicitly:
+run, pass the same file list explicitly:
 
 ```sh
-make -C env-scripts/fpga_diff vivado_project \
-  CPU=kmh CORE_DIR="$RELEASE_PATH/build" \
-  RTL_INCLUDE=/path/to/external_llc.f
-
-# Or prepare the UVHS project without running its frontend.
-make -C env-scripts/fpga_diff uvhs_project \
+make project FPGA_BACKEND=<FPGA_BACKEND> \
   CPU=kmh CORE_DIR="$RELEASE_PATH/build" \
   RTL_INCLUDE=/path/to/external_llc.f
 ```
@@ -264,10 +250,6 @@ rsync -a --delete ready-to-run/ <FPGA_REMOTE>:$REMOTE_ROOT/ready-to-run/
 | `RANDOM_MEM` | `1` | Set to `1` to pass `--random-mem --seed=$(SEED)` |
 | `SEED` | `1234` | Random DDR initialization seed when `RANDOM_MEM=1` |
 | `RUN_HOST_ARGS` | derived from `DIFF`, `WORKLOAD`, `RAM_SIZE`, `RANDOM_MEM`, `SEED` | Full argument list passed to `fpga-host` |
-| `UVHS_ILA_RUNTIME` | empty | SSH host that owns the UVHS runtime |
-| `UVHS_ILA_DIR` | remote `env-scripts/fpga_diff` path | Directory where UVHS runtime Make targets execute |
-| `UVHS_ILA_ENV` | `source ~/.bashrc &&` | Runtime environment setup command |
-| `UVHS_ILA_TRIGGER` | UVHS runtime default | Trigger configuration path visible on the runtime host |
 
 ### Example
 
@@ -291,47 +273,37 @@ make run_host \
 
 An external-LLC image also requires its boot ROM in the writable boot flash.
 After `write_bitstream`, write `<BOOTRAM_BIN>` before releasing the CPU. The
-top-level command dispatches to `vivado_write_flash` or `uvhs_write_flash`:
+backend-neutral env-scripts target selects the Vivado or UVHS implementation:
 
 ```sh
-make write_jtag_flash \
+make -C env-scripts/fpga_diff write_flash \
   FPGA_BACKEND=<FPGA_BACKEND> \
-  REMOTE=<FPGA_REMOTE> \
-  REMOTE_DIR=$REMOTE_ROOT \
   PRJ_NAME=<PRJ_NAME> \
   FPGA_BIT_HOME=$BIT_ROOT \
   WORKLOAD=<BOOTRAM_BIN>
 ```
 
-When working directly in `env-scripts/fpga_diff`, the corresponding commands
-are:
-
-```sh
-make vivado_write_flash WORKLOAD=<BOOTRAM_BIN>
-make uvhs_write_flash PRJ_NAME=<PRJ_NAME> WORKLOAD=<BOOTRAM_BIN>
-```
+Run this command from the checkout on the FPGA or UVHS runtime host.
 
 `run_host` auto-finds `fpga-host` under `FPGA_BIT_HOME` and picks the `.bin` and `.txt` inside `WORKLOAD`.
 
 `FPGA_BACKEND` also selects the implementation of `write_bitstream`,
-`write_jtag_ddr`, `write_jtag_flash`, and `reset_cpu`. The default `vivado`
+`write_ddr`, `write_flash`, and `reset_cpu`. The default `vivado`
 backend preserves the existing Vivado/JTAG behavior. With `FPGA_BACKEND=uvhs`,
 the same runtime-control targets operate on the active UVHS database and do not
 require `FPGA_BIT_HOME`. `run_host` still uses `FPGA_BIT_HOME` to locate the
 release containing `fpga-host`.
 
 For UVHS, `write_bitstream` downloads the implementation database and starts a
-persistent runtime session. Check or stop that session with the backend-neutral
-targets:
+persistent runtime session. Check or stop that session from its env-scripts
+checkout:
 
 ```sh
-make runtime_status FPGA_BACKEND=uvhs \
-  REMOTE=<UVHS_RUNTIME_REMOTE> REMOTE_DIR=$REMOTE_ROOT \
-  CPU=<CPU> SUFFIX=<tag>
+make -C env-scripts/fpga_diff runtime_status \
+  FPGA_BACKEND=uvhs CPU=<CPU> SUFFIX=<tag>
 
-make runtime_stop FPGA_BACKEND=uvhs \
-  REMOTE=<UVHS_RUNTIME_REMOTE> REMOTE_DIR=$REMOTE_ROOT \
-  CPU=<CPU> SUFFIX=<tag>
+make -C env-scripts/fpga_diff runtime_stop \
+  FPGA_BACKEND=uvhs CPU=<CPU> SUFFIX=<tag>
 ```
 
 When `FPGA_BACKEND=uvhs`, `run_host` automatically sets `FPGA_ILA_ARM_CMD` and
@@ -346,49 +318,40 @@ make run_host \
   FPGA_BIT_HOME=<HOST_RELEASE_DIR> \
   WORKLOAD=<WORKLOAD_DIR> \
   DIFF=<NEMU_SO> \
-  CPU=<CPU> SUFFIX=<tag> \
-  UVHS_ILA_RUNTIME=<UVHS_RUNTIME_REMOTE> \
-  UVHS_ILA_DIR=$REMOTE_ROOT/env-scripts/fpga_diff
+  CPU=<CPU> SUFFIX=<tag>
 ```
 
 The generated commands source the runtime user's shell environment before
 calling the backend-neutral `env-scripts` ILA arm/upload targets. Backend
 dispatch and command construction stay inside `env-scripts`; playground only
-passes `FPGA_BACKEND`. Capture parameters can be overridden with
-`UVHS_ILA_TRIGGER`, `UVHS_ILA_POSITION`, `UVHS_ILA_CLOCK`,
-`UVHS_ILA_GATED_CLOCK`, `UVHS_ILA_TIMEOUT`, and `UVHS_ILA_DEPTH`. Clear a
-timed-out or unwanted trigger configuration with:
-
-```sh
-make ila_clear FPGA_BACKEND=uvhs \
-  REMOTE=<UVHS_RUNTIME_REMOTE> REMOTE_DIR=$REMOTE_ROOT \
-  CPU=<CPU> SUFFIX=<tag>
-```
+passes `FPGA_BACKEND` and `UVHS_RUNTIME`.
 
 With `USE_XDMA_H2C=1` (the default), the host writes only the workload `.bin` to DDR through XDMA H2C before releasing the CPU. It does not write the FPGA boot flash.
 
-With `USE_XDMA_H2C=0`, the host write DDR with external `FPGA_DDR_LOAD_CMD`:
+With `USE_XDMA_H2C=0`, the host writes DDR with external `FPGA_DDR_LOAD_CMD`:
 
 ```sh
-make write_jtag_ddr \
-  REMOTE=<FPGA_REMOTE> \
-  REMOTE_DIR=$REMOTE_ROOT \
+make -C env-scripts/fpga_diff write_ddr \
+  FPGA_BACKEND=<FPGA_BACKEND> \
+  PRJ_NAME=<PRJ_NAME> \
   FPGA_BIT_HOME=$BIT_ROOT \
-  WORKLOAD=$REMOTE_ROOT/ready-to-run/$WORKLOAD_TAG
+  WORKLOAD=$REMOTE_ROOT/ready-to-run/$WORKLOAD_TAG/$WORKLOAD_TAG.txt
 ```
 
-### JTAG DDR Fallback / Debug Path
+### DDR Fallback / Debug Path
 
-`write_jtag_ddr` is kept for manual debugging and for host builds made with `USE_XDMA_H2C=0`; normal `run_host` uses H2C for DDR loading.
+The direct `write_ddr` target is available for manual debugging and host builds
+made with `USE_XDMA_H2C=0`; normal `run_host` uses H2C for DDR loading.
 
-### JTAG Boot Flash Path
+### Boot Flash Path
 
-For designs that require a boot image in flash, write it through JTAG after every `write_bitstream`.
+For designs that require a boot image in flash, write it after every
+`write_bitstream`.
 
 ```sh
-make write_jtag_flash \
-  REMOTE=<FPGA_REMOTE> \
-  REMOTE_DIR=$REMOTE_ROOT \
+make -C env-scripts/fpga_diff write_flash \
+  FPGA_BACKEND=<FPGA_BACKEND> \
+  PRJ_NAME=<PRJ_NAME> \
   FPGA_BIT_HOME=$BIT_ROOT \
   WORKLOAD=<BOOTRAM_BIN>
 ```

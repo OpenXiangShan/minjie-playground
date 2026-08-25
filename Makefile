@@ -152,19 +152,8 @@ RANDOM_MEM ?= 1
 SEED ?= 1234
 RUN_LOG ?= $(BUILD_DIR)/run-log/run-$$(date +%Y%m%d-%H%M%S).log
 
-UVHS_ILA_RUNTIME ?=
-UVHS_ILA_DIR ?= $(FPGA_DIFF_HOME)
-UVHS_ILA_ENV ?= source ~/.bashrc &&
-UVHS_ILA_TRIGGER ?= $(UVHS_ILA_DIR)/uvhs/runtime/trigger.ini
-UVHS_ILA_POSITION ?= 0
-UVHS_ILA_CLOCK ?= clk5_p
-UVHS_ILA_GATED_CLOCK ?=
-UVHS_ILA_TIMEOUT ?= 60
-UVHS_ILA_DEPTH ?= 1000000
-
-.PHONY: help init link_difftest clean verilog release host check_project_name bit write_bitstream \
-	write_jtag_flash write_jtag_ddr reset_cpu workload nemu run_host \
-	runtime_status runtime_stop ila_clear \
+.PHONY: help init link_difftest clean verilog release host check_project_name project bit \
+	write_bitstream reset_cpu workload nemu run_host ila_clear \
 	xiangshan nutshell xs nut
 
 help:
@@ -174,13 +163,12 @@ help:
 	@printf '%s\n' '  make verilog nutshell             build NutShell FPGA DiffTest Verilog'
 	@printf '%s\n' '  make release xiangshan            package RTL/difftest release'
 	@printf '%s\n' '  make host xiangshan FPGA_HOST_HOME=...'
+	@printf '%s\n' '  make project xiangshan            prepare a vivado (default) or uvhs project'
 	@printf '%s\n' '  make bit xiangshan                build with FPGA_BACKEND=vivado (default) or uvhs'
 	@printf '%s\n' '  make workload xiangshan TARGET=am/hello  build workload and generate ready-to-run/<design>-<target>'
 	@printf '%s\n' '  make workload xiangshan TARGET=linux/hello  # defaults to xiangshan-fpga-AIA-mem16g.dtb'
 	@printf '%s\n' '  make nemu                         build NEMU ref so into ready-to-run/<NEMU_CONFIG>/'
 	@printf '%s\n' '  make write_bitstream FPGA_BIT_HOME=...'
-	@printf '%s\n' '  make write_jtag_flash FPGA_BIT_HOME=... WORKLOAD=<bootrom.bin>'
-	@printf '%s\n' '  make write_jtag_ddr FPGA_BIT_HOME=... WORKLOAD=<workload-dir>   # manual / debug path'
 	@printf '%s\n' '  make reset_cpu FPGA_BIT_HOME=...'
 	@printf '%s\n' '  make run_host FPGA_BIT_HOME=... WORKLOAD=<workload-dir> [HOST=...] [DIFF=/path/to/nemu-so]'
 	@printf '%s\n' ''
@@ -189,7 +177,6 @@ help:
 	@printf '%s\n' 'Vector DiffTest is enabled by default; set DIFFTEST_EXCLUDE=Vec for a no-vector build.'
 	@printf '%s\n' 'Set DIFF=/path/to/nemu-so for diff mode; leave DIFF empty for --no-diff.'
 	@printf '%s\n' 'Set FPGA_BACKEND=uvhs to use the UVHS compile, runtime, memory, reset, and ILA paths.'
-	@printf '%s\n' 'Set PRJ_NAME=... to keep a stable backend project/work directory name (letters, digits, ._-).'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Remote Vivado/FPGA: add REMOTE=user@host REMOTE_DIR=/path/to/FpgaDiff-playground.'
 
@@ -269,8 +256,12 @@ check_project_name:
 			echo "Use only letters, digits, '.', '_', and '-'." >&2; exit 2 ;; \
 	esac
 
-bit write_bitstream write_jtag_flash write_jtag_ddr reset_cpu \
-	runtime_status runtime_stop ila_clear run_host: check_project_name
+project bit write_bitstream reset_cpu ila_clear run_host: check_project_name
+
+project:
+	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) project FPGA_BACKEND=$(FPGA_BACKEND) \
+		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" CORE_DIR=$(CORE_DIR) \
+		RTL_INCLUDE="$(RTL_INCLUDE)" NO_DIFF=$(NO_DIFF))
 
 bit:
 	$(call require_design)
@@ -308,29 +299,10 @@ write_bitstream:
 		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
 		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
 
-write_jtag_flash:
-	$(call require_var,WORKLOAD)
-	$(call remote,bootrom=$(call abs_path,$(WORKLOAD)); \
-		$(MAKE) -C $(FPGA_DIFF_HOME) write_flash FPGA_BACKEND=$(FPGA_BACKEND) \
-		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
-		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)) WORKLOAD="$$bootrom")
-
-write_jtag_ddr:
-	$(call require_var,WORKLOAD)
-	$(call remote,workload=$(call abs_path,$(WORKLOAD)); \
-		test -d "$$workload" && workload=$$(echo "$$workload"/*.txt) || true; \
-		$(MAKE) -C $(FPGA_DIFF_HOME) write_ddr FPGA_BACKEND=$(FPGA_BACKEND) \
-		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
-		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)) WORKLOAD="$$workload")
-
 reset_cpu:
 	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) reset_cpu FPGA_BACKEND=$(FPGA_BACKEND) \
 		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
 		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
-
-runtime_status runtime_stop:
-	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) $@ FPGA_BACKEND=$(FPGA_BACKEND) \
-		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF))
 
 ila_clear:
 	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) $@ FPGA_BACKEND=$(FPGA_BACKEND) \
@@ -400,15 +372,7 @@ run_host:
 		ila_env=$$($(MAKE) -s --no-print-directory -C $(FPGA_DIFF_HOME) ila_host_env \
 			FPGA_BACKEND=$(FPGA_BACKEND) PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) \
 			SUFFIX=$(SUFFIX) NO_DIFF=$(NO_DIFF) \
-			UVHS_ILA_RUNTIME="$(UVHS_ILA_RUNTIME)" \
-			UVHS_ILA_DIR="$(UVHS_ILA_DIR)" \
-			UVHS_ILA_ENV="$(UVHS_ILA_ENV)" \
-			UVHS_ILA_TRIGGER="$(UVHS_ILA_TRIGGER)" \
-			UVHS_ILA_POSITION="$(UVHS_ILA_POSITION)" \
-			UVHS_ILA_CLOCK="$(UVHS_ILA_CLOCK)" \
-			UVHS_ILA_GATED_CLOCK="$(UVHS_ILA_GATED_CLOCK)" \
-			UVHS_ILA_TIMEOUT="$(UVHS_ILA_TIMEOUT)" \
-			UVHS_ILA_DEPTH="$(UVHS_ILA_DEPTH)"); \
+			UVHS_RUNTIME="$(UVHS_RUNTIME)"); \
 		eval "$$ila_env"; \
 		[ -z "$${FPGA_ILA_ARM_CMD:-}" ] || host_env+=("FPGA_ILA_ARM_CMD=$$FPGA_ILA_ARM_CMD"); \
 		[ -z "$${FPGA_ILA_UPLOAD_CMD:-}" ] || host_env+=("FPGA_ILA_UPLOAD_CMD=$$FPGA_ILA_UPLOAD_CMD"); \

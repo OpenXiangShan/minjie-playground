@@ -52,9 +52,9 @@ minjie-playground/
 
 | File | Purpose |
 |------|---------|
-| `Makefile` | Top-level build targets (`init`, `verilog`, `release`, `host`, `bit`, `nemu`, `workload`, `write_bitstream`, `write_jtag_flash`, `write_jtag_ddr`, `reset_cpu`, `run_host`) |
+| `Makefile` | Top-level build targets (`init`, `verilog`, `release`, `host`, `project`, `bit`, `nemu`, `workload`, `write_bitstream`, `reset_cpu`, `run_host`) |
 | `build/release/latest-<design>.path` | Absolute path to the most recent release (for local use) |
 | `build/release/latest-<design>.name` | Release directory name only (for constructing remote paths) |
-| `env-scripts/fpga_diff/Makefile` | Vivado build and FPGA operation targets |
+| `env-scripts/fpga_diff/Makefile` | Vivado/UVHS project, build, programming, memory, and runtime targets |
 | `workload-builder/dts/*.dts.in` | Device tree templates for each platform |
 | `difftest/docs/` | DiffTest internal documentation (hardware pipeline, software checkers, config letters) |
