@@ -60,7 +60,7 @@ Program on the Fpga host, halt the SoC before writing DDR, then release reset. T
 make write_bitstream NO_DIFF=1 FPGA_BIT_HOME=/path/to/bitstream
 make -C env-scripts/fpga_diff halt_soc \
   FPGA_BIT_HOME=/path/to/bitstream
-make write_jtag_ddr \
+make write_ddr \
   FPGA_BIT_HOME=/path/to/bitstream \
   WORKLOAD=ready-to-run/xiangshan-am-hello
 make reset_cpu FPGA_BIT_HOME=/path/to/bitstream
