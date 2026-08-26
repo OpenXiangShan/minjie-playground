@@ -34,7 +34,7 @@ minjie-playground/
 | `NEMU/` | RISC-V emulator used as the DiffTest reference model. Compiled into a `.so` shared library. |
 | `workload-builder/` | Builds Linux and AM (bare-metal) workloads with device trees, OpenSBI, and rootfs. |
 | `Bin2ddr/` | Converts a binary image into a `.txt` file for JTAG DDR initialization. H2C runs use the workload `.bin` directly. |
-| `env-scripts/fpga_diff/` | Vivado project files, Tcl scripts for synthesis/bitstream, and FPGA operation tools (write bitstream, halt SoC, JTAG write DDR, JTAG write flash, reset CPU). |
+| `env-scripts/fpga_diff/` | Vivado/UVHS project files, Tcl scripts for synthesis/bitstream, and FPGA operation tools (write bitstream, halt SoC, write DDR, write flash, reset CPU). |
 
 ## Output Directories
 
