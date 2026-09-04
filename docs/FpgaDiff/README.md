@@ -11,10 +11,15 @@ XiangShan / NutShell Verilog
   -> NEMU generates reference SO
   -> workload-builder compiles workloads
   -> Bin2ddr generates DDR txt for the JTAG fallback/debug path
-  -> optional JTAG stages a raw boot image in BRAM-backed boot flash
-  -> FPGA: write bitstream, reset cpu
+  -> external-LLC flows write the boot image after every bitstream download
+  -> FPGA: write bitstream, restore XDMA, write boot flash when required
   -> fpga-host loads the workload through XDMA H2C by default, then starts DiffTest
 ```
+
+For UVHS, the runtime host owns download/reset/flash/ILA and the FPGA host owns
+the Linux XDMA endpoint and `fpga-host`. The top-level download flow removes and
+rescans XDMA around every runtime download. See [workflow.md](./workflow.md) for
+the two-host command sequence and UART bridge.
 
 ## Common Artifacts
 

@@ -61,6 +61,7 @@ REMOTE ?=
 REMOTE_DIR ?= $(ROOT_DIR)
 REMOTE_ENV ?= source ~/.bash_profile &&
 SSH ?= ssh
+FPGA_HOST_REMOTE ?=
 
 FPGA_ROOT := $(if $(strip $(REMOTE)),$(REMOTE_DIR),$(ROOT_DIR))
 FPGA_DIFF_HOME := $(FPGA_ROOT)/env-scripts/fpga_diff
@@ -74,6 +75,7 @@ override SUFFIX := nodiff$(if $(strip $(SUFFIX)),-$(strip $(SUFFIX)),)
 endif
 endif
 FPGA_BACKEND ?= vivado
+UVHS_KEEP_RUNTIME ?= 0
 PRJ_NAME ?= fpga_$(FPGA_BACKEND)_$(CPU)$(if $(strip $(SUFFIX)),-$(strip $(SUFFIX)),)
 export PRJ_NAME
 BIT_SRC_DIR ?= $(shell cat "$(RELEASE_LATEST_PATH)" 2>/dev/null)
@@ -179,6 +181,7 @@ help:
 	@printf '%s\n' 'Vector DiffTest is enabled by default; set DIFFTEST_EXCLUDE=Vec for a no-vector build.'
 	@printf '%s\n' 'Set DIFF=/path/to/nemu-so for diff mode; leave DIFF empty for --no-diff.'
 	@printf '%s\n' 'Set FPGA_BACKEND=uvhs to use the UVHS compile, runtime, memory, reset, and ILA paths.'
+	@printf '%s\n' 'Set FPGA_HOST_REMOTE for UVHS XDMA remove/rescan and UVHS_KEEP_RUNTIME=1 for consecutive runs.'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Remote backend/runtime: add REMOTE=user@host REMOTE_DIR=/path/to/FpgaDiff-playground.'
 
@@ -297,9 +300,26 @@ bit:
 		cp -a "$$release_src" "$(BIT_OUT_DIR)/" && \
 		find "$(BIT_OUT_DIR)" -maxdepth 1 -mindepth 1 | sort | tee -a $(BIT_LOG))
 write_bitstream:
+
+ifeq ($(FPGA_BACKEND),uvhs)
+	$(call require_var,FPGA_HOST_REMOTE)
+	@set -u; \
+		$(SSH) $(FPGA_HOST_REMOTE) 'bash -s' \
+			< "$(ROOT_DIR)/env-scripts/fpga_diff/tools/pcie-remove.sh" || exit $$?; \
+		runtime_status=0; \
+		$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) write_bitstream FPGA_BACKEND=$(FPGA_BACKEND) \
+			PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
+			FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME))) || runtime_status=$$?; \
+		rescan_status=0; \
+		$(SSH) $(FPGA_HOST_REMOTE) 'bash -s' \
+			< "$(ROOT_DIR)/env-scripts/fpga_diff/tools/pcie-rescan.sh" || rescan_status=$$?; \
+		if ((runtime_status != 0)); then exit $$runtime_status; fi; \
+		exit $$rescan_status
+else
 	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) write_bitstream FPGA_BACKEND=$(FPGA_BACKEND) \
 		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
 		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
+endif
 
 write_flash:
 	$(call require_var,WORKLOAD)
@@ -370,6 +390,10 @@ RUN_HOST_ARGS ?= -i "$$workload_bin" \
 run_host:
 	$(call require_var,FPGA_BIT_HOME)
 	$(call require_var,WORKLOAD)
+	@case "$(UVHS_KEEP_RUNTIME)" in \
+		0|1) ;; \
+		*) echo "ERROR: UVHS_KEEP_RUNTIME must be 0 or 1" >&2; exit 2 ;; \
+	esac
 	@run_log="$(RUN_LOG)"; mkdir -p "$$(dirname "$$run_log")"; \
 	exec > >(setsid tee "$$run_log") 2>&1; \
 	$(call remote,\
@@ -393,7 +417,36 @@ run_host:
 		eval "$$ila_env"; \
 		[ -z "$${FPGA_ILA_ARM_CMD:-}" ] || host_env+=("FPGA_ILA_ARM_CMD=$$FPGA_ILA_ARM_CMD"); \
 		[ -z "$${FPGA_ILA_UPLOAD_CMD:-}" ] || host_env+=("FPGA_ILA_UPLOAD_CMD=$$FPGA_ILA_UPLOAD_CMD"); \
-		exec env "$${host_env[@]}" "$$host" $(RUN_HOST_ARGS))
+		cleanup_status=0; cleanup_done=0; \
+		cleanup_uvhs() { \
+			[ "$(FPGA_BACKEND)" = uvhs ] || return 0; \
+			[ "$$cleanup_done" = 0 ] || return 0; \
+			cleanup_done=1; \
+			if [ -n "$${FPGA_ILA_CLEAR_CMD:-}" ]; then \
+				eval "$$FPGA_ILA_CLEAR_CMD"; command_status=$$?; \
+				if ((command_status != 0)); then \
+					echo "ERROR: failed to clear UVHS ILA (status $$command_status)" >&2; \
+					cleanup_status=$$command_status; \
+				fi; \
+			fi; \
+			if [ "$(UVHS_KEEP_RUNTIME)" = 0 ]; then \
+				if [ -z "$${FPGA_RUNTIME_STOP_CMD:-}" ]; then \
+					echo "ERROR: UVHS runtime stop command is unavailable" >&2; \
+					cleanup_status=1; \
+				else \
+					eval "$$FPGA_RUNTIME_STOP_CMD"; command_status=$$?; \
+					if ((command_status != 0)); then \
+						echo "ERROR: failed to stop UVHS runtime (status $$command_status)" >&2; \
+						cleanup_status=$$command_status; \
+					fi; \
+				fi; \
+			fi; \
+		}; \
+		trap cleanup_uvhs EXIT; trap "exit 130" INT; trap "exit 143" TERM; \
+		env "$${host_env[@]}" "$$host" $(RUN_HOST_ARGS); host_status=$$?; \
+		cleanup_uvhs; trap - EXIT INT TERM; \
+		if ((host_status != 0)); then exit $$host_status; fi; \
+		exit $$cleanup_status)
 
 xiangshan nutshell xs nut:
 	@:

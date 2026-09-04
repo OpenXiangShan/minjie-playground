@@ -63,16 +63,26 @@ fi
 # Load the xdma-chr driver
 /sbin/modprobe xdma_chr
 
-# Wait for device nodes
+# Wait for device nodes. Persistent permissions are provided by the udev rule
+# below, including nodes recreated by a PCIe remove/rescan.
 sleep 2
-
-# Set permissions
-for dev in /dev/xdma0_c2h_* /dev/xdma0_h2c_* /dev/xdma0_control /dev/xdma0_user /dev/xdma0_xvc; do
-    [ -e "$dev" ] && chmod 666 "$dev"
-done
 
 echo "XDMA driver loaded. Devices:"
 ls /dev/xdma0_* 2>/dev/null || echo "WARNING: no xdma devices found"
+```
+
+Install `/etc/udev/rules.d/99-xdma-local.rules` so hot rescans do not require a
+separate `sudo chmod`:
+
+```udev
+SUBSYSTEM=="xdma", KERNEL=="xdma0_*", MODE="0666"
+```
+
+Reload the rule before the next driver bind:
+
+```bash
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=xdma
 ```
 
 Install:
@@ -109,12 +119,18 @@ sudo systemctl start load-xdma.service
 
 ```bash
 lsmod | grep xdma_chr
+lspci -Dnnk -d 10ee:9048
 ls /dev/xdma0_*
 # Expected: c2h_0, h2c_0, control, user, xvc, events_0-15
 ```
 
 `fpga-host` uses `/dev/xdma0_h2c_0` for the default H2C workload load path and `/dev/xdma0_c2h_*` for DiffTest packets from FPGA to host.
 If `run_host` fails before printing `XDMA H2C queued`, verify that the H2C node exists and has write permission.
+
+After each UVHS runtime download, the top-level `write_bitstream` flow removes
+and rescans the endpoint on the XDMA host. The rescan waits for `xdma-chr`, then
+prints the endpoint and recreated device nodes. Run the repository scripts as a
+normal user; only their internal sysfs `tee` operations require sudo.
 
 ## 6. Troubleshooting
 

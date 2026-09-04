@@ -23,10 +23,10 @@ Common issues encountered during FPGA DiffTest and how to diagnose them.
     dmesg | grep -i "pci\|xdma"
     ```
 
-2. Verify the device appears on the PCIe bus:
+2. Verify the configured XDMA device appears on the PCIe bus:
 
     ```sh
-    lspci | grep -i xilinx
+    lspci -Dnnk -d 10ee:9048
     ```
 
 3. If the device is visible but the driver fails, check driver debug logs:
@@ -41,17 +41,27 @@ Common issues encountered during FPGA DiffTest and how to diagnose them.
     build/build-log/bit-<cpu>-<timestamp>.log
     ```
 
-5. Try removing and rescanning the PCIe device:
+5. Remove and rescan the PCIe device after every UVHS runtime download:
 
     ```sh
     # On the FPGA host:
-    sudo env-scripts/fpga_diff/tools/pcie-remove.sh
-    sudo env-scripts/fpga_diff/tools/pcie-rescan.sh
+    env-scripts/fpga_diff/tools/pcie-remove.sh
+    env-scripts/fpga_diff/tools/pcie-rescan.sh
     ```
+
+    Run the scripts as the normal user. They use narrowly authorized
+    `sudo tee` operations for driver unbind, device removal, and bus rescan.
+    The remove script prints any active `fpga-host` process and refuses to
+    disrupt it. The rescan script waits for `xdma-chr`, prints the endpoint and
+    `/dev/xdma0_*` nodes, and checks that the current user can read and write
+    the required H2C, C2H, and user nodes. With the documented udev rule, a
+    separate `sudo chmod` after rescan is not required.
 
 ## 2. XDMA Stalls or Packet Errors
 
-**Symptoms**: `fpga-host` hangs after a few seconds; error messages about unexpected packet length or corrupted data; sporadic "DMA timeout" errors.
+**Symptoms**: `fpga-host` exits before H2C, reports `XDMA H2C write failed:
+Connection timed out`, waits after `XDMA H2C queued`, or reports unexpected
+packet length/corrupted C2H data.
 
 **Possible Causes**:
 
@@ -63,9 +73,18 @@ Common issues encountered during FPGA DiffTest and how to diagnose them.
 
 **Debugging Steps**:
 
-1. **Check packet index continuity**: The XDMA logic maintains a `package_idx` counter. If packets are dropped or reordered, the counter will show gaps. Use ILA or add debug prints to verify.
+1. **Classify the failing stage**:
 
-2. **Enable DIFFTEST_QUERY**: Rebuild the host with query support to get packet-level diagnostics:
+    | Last host marker | Interpretation |
+    |------------------|----------------|
+    | Cannot open `/dev/xdma0_*` | Enumeration, driver binding, or node-permission failure |
+    | `H2C workload size` then `Connection timed out` | XDMA is open, but the FPGA-side H2C path is not accepting the transfer |
+    | `XDMA H2C queued` without `H2C load done` | Host DMA submission returned, but the FPGA memory controller did not report completion |
+    | `H2C load done` without UART or C2H packets | H2C completed; inspect flash, CPU reset/execution, DDR reads, and C2H instead |
+
+2. **Check packet index continuity**: The XDMA logic maintains a `package_idx` counter. If packets are dropped or reordered, the counter will show gaps. Use ILA or add debug prints to verify.
+
+3. **Enable DIFFTEST_QUERY**: Rebuild the host with query support to get packet-level diagnostics:
 
     ```sh
     make host xiangshan FPGA_HOST_HOME=$RELEASE_DIR DIFFTEST_QUERY=1
@@ -73,14 +92,14 @@ Common issues encountered during FPGA DiffTest and how to diagnose them.
 
     Sync and re-run new host to see per-packet statistics.
 
-3. **Use ILA for signal-level debugging**: If software diagnostics are inconclusive, add ILA probes in Vivado to capture:
+4. **Use ILA for signal-level debugging**: If software diagnostics are inconclusive, add ILA probes in Vivado to capture:
     - XDMA AXI transactions (address, data, valid/ready)
     - DiffTest packet boundaries and `package_idx`
     - DMA descriptor ring state
 
     After adding probes, regenerate the bitstream and use the `.ltx` file with Vivado Hardware Manager.
 
-4. **Check for XDMA driver issues**: Review `dmesg` for DMA errors or timeouts. Consider reloading the XDMA driver:
+5. **Check for XDMA driver issues**: Review `dmesg` for DMA errors or timeouts. Consider reloading the XDMA driver:
 
     ```sh
     sudo rmmod xdma
@@ -104,9 +123,11 @@ Common issues encountered during FPGA DiffTest and how to diagnose them.
 
 1. **Check which path you are using**:
    Host path: `make run_host ...`
-   UART/manual path: `stty -F /dev/ttyUSB0 ...` plus `halt_soc -> [write_flash] -> write_ddr -> reset_cpu`
+   UART/manual path: `stty -F /dev/ttyUSB0 ...` plus `write_flash -> halt_soc -> write_ddr -> reset_cpu`
 
-   The default host path uses H2C for workload DDR loading only.
+   The default host path uses H2C for workload DDR loading only. H2C selects
+   its own DDR AXI source ahead of the CPU source and does not need a separate
+   `halt_soc` command.
    If the design boots from flash, write the boot image through the env-scripts
    `write_flash` target after each `write_bitstream` and before `run_host`.
 
@@ -115,13 +136,16 @@ Common issues encountered during FPGA DiffTest and how to diagnose them.
    Also verify that `/dev/xdma0_h2c_0` exists and that the host was built with `USE_XDMA_H2C=1`.
    If the host was intentionally built with `USE_XDMA_H2C=0`, check the log for the `external DDR load command` instead.
 
-3. **Both paths should begin with `reset_cpu` after `write_bitstream`**: If the board was not reset after flashing, later symptoms can look like DDR load or host issues even when the real problem is stale FPGA state.
+3. **Check the write operation's reset ownership**: `write_flash` protects and
+   restores CPU execution internally. UVHS `write_ddr` and the manual Vivado
+   JTAG DDR flow require the CPU to remain halted until `reset_cpu`. H2C manages
+   CPU DDR ownership through the FPGA memory controller instead.
 
 4. **If you are using the UART/manual path, verify the order**:
-    Keep the UART terminal open, then run the env-scripts `halt_soc`, optional
-    `write_flash`, `write_ddr`, and `reset_cpu` targets in that order.
-    `write_flash` takes a raw boot image, must finish before the CPU is released,
-    and must be repeated after every `write_bitstream`.
+    Keep the UART terminal open, write the external-LLC flash image when needed,
+    then run `halt_soc`, `write_ddr`, and `reset_cpu` in that order.
+    `write_flash` takes a raw boot image and must be repeated after every
+    `write_bitstream` for an external-LLC design.
     If you skip `halt_soc` or reset too early, the CPU may run before DDR is fully initialized.
 
 5. **Verify the workload binary**: Check the file size is reasonable:
@@ -133,7 +157,7 @@ Common issues encountered during FPGA DiffTest and how to diagnose them.
     For Linux workloads, the binary should be several megabytes. A very small file suggests a build failure.
 
 6. **Check the reset sequence**:
-    `write_bitstream` is followed by an initial `reset_cpu` in both paths. After that:
+    `write_bitstream` initializes and releases the design. After that:
     Host path: `fpga-host` random-initializes DDR if requested, then loads the workload through H2C, then releases CPU reset.
     UART/manual path: a second `reset_cpu` should be called after `halt_soc`, any boot-flash write, and `write_ddr`:
 

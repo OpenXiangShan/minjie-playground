@@ -9,6 +9,7 @@ This document describes the end-to-end FPGA DiffTest flow. Each step lists optio
 - `<FPGA_BUILD_REMOTE>`: remote machine used by the selected FPGA backend
 - `<FPGA_REMOTE>`: remote FPGA host
 - `<FPGA_RUNTIME_REMOTE>`: FPGA host for Vivado, or the UVHS runtime host for UVHS
+- `<FPGA_HOST_REMOTE>`: host that owns XDMA and runs `fpga-host`
 - `<CPU>`: backend CPU name, such as `kmh` or `nutshell`
 - `<NEMU_CONFIG>`: NEMU defconfig name
 - `<TARGET>`: workload-builder target such as `linux/hello` or `am/hello`
@@ -243,6 +244,9 @@ rsync -a --delete ready-to-run/ <FPGA_REMOTE>:$REMOTE_ROOT/ready-to-run/
 | `REMOTE` | empty | Remote execution target |
 | `REMOTE_DIR` | repository root | Repository path on the remote target |
 | `FPGA_BACKEND` | `vivado` | Use the same backend selected for `make bit` |
+| `FPGA_HOST_REMOTE` | empty | XDMA host refreshed around every UVHS runtime download |
+| `UVHS_RUNTIME` | empty | UVHS runtime host used by host-side ILA and cleanup commands |
+| `UVHS_KEEP_RUNTIME` | `0` | Set to `1` to retain UVHS for consecutive `run_host` invocations |
 | `FPGA_BIT_HOME` | none | Bitstream bundle directory |
 | `WORKLOAD` | none | Workload directory containing `.bin` and `.txt` |
 | `DIFF` | empty | NEMU SO path for diff mode |
@@ -252,20 +256,20 @@ rsync -a --delete ready-to-run/ <FPGA_REMOTE>:$REMOTE_ROOT/ready-to-run/
 | `SEED` | `1234` | Random DDR initialization seed when `RANDOM_MEM=1` |
 | `RUN_HOST_ARGS` | derived from `DIFF`, `WORKLOAD`, `RAM_SIZE`, `RANDOM_MEM`, `SEED` | Full argument list passed to `fpga-host` |
 
-### Example
+### Vivado Example
 
 ```sh
 export BIT_ROOT=$REMOTE_ROOT/bitstream/$BIT_TAG
 
 make write_bitstream \
-  FPGA_BACKEND=<FPGA_BACKEND> \
-  REMOTE=<FPGA_REMOTE> \
+  FPGA_BACKEND=vivado \
+  REMOTE=<FPGA_HOST_REMOTE> \
   REMOTE_DIR=$REMOTE_ROOT \
   FPGA_BIT_HOME=$BIT_ROOT
 
 make run_host \
-  FPGA_BACKEND=<FPGA_BACKEND> \
-  REMOTE=<FPGA_REMOTE> \
+  FPGA_BACKEND=vivado \
+  REMOTE=<FPGA_HOST_REMOTE> \
   REMOTE_DIR=$REMOTE_ROOT \
   FPGA_BIT_HOME=$BIT_ROOT \
   WORKLOAD=$REMOTE_ROOT/ready-to-run/$WORKLOAD_TAG \
@@ -273,8 +277,8 @@ make run_host \
 ```
 
 An external-LLC image also requires its boot ROM in the writable boot flash.
-After `write_bitstream`, write `<BOOTRAM_BIN>` before releasing the CPU. The
-top-level target selects the Vivado or UVHS implementation:
+After every `write_bitstream`, write `<BOOTRAM_BIN>` before `run_host`. The
+backend-neutral target protects the CPU while the flash contents change:
 
 ```sh
 make write_flash \
@@ -294,9 +298,77 @@ the same runtime-control targets operate on the active UVHS database and do not
 require `FPGA_BIT_HOME`. `run_host` still uses `FPGA_BIT_HOME` to locate the
 release containing `fpga-host`.
 
-For UVHS, `write_bitstream` downloads the implementation database and starts a
-persistent runtime session. Check or stop that session from its env-scripts
-checkout:
+### UVHS Runtime And Host
+
+The UVHS flow uses two machines. The runtime host owns the UVHS database,
+reset, flash, DDR backdoor, physical UART, and ILA. The FPGA host owns the Linux
+PCIe endpoint, XDMA driver and device nodes, and `fpga-host`.
+
+Every top-level UVHS `write_bitstream` removes the `10ee:9048` endpoint on the
+FPGA host, downloads the database on the runtime host, then rescans and checks
+XDMA on the FPGA host. The remove step refuses to continue while `fpga-host` is
+running. The rescan step prints the endpoint, bound driver, device nodes, and
+permissions.
+
+```sh
+make write_bitstream \
+  FPGA_BACKEND=uvhs \
+  REMOTE=<FPGA_RUNTIME_REMOTE> \
+  FPGA_HOST_REMOTE=<FPGA_HOST_REMOTE> \
+  REMOTE_DIR=$REMOTE_ROOT \
+  CPU=<CPU> SUFFIX=<tag>
+```
+
+UVHS restores the CPU clock to the sign-off frequency stored in `hw.dat`. It
+does not use a separate workload-loading frequency. The UART clock remains
+50 MHz, and TMCLK is derived from the configured CPU-to-TMCLK ratio.
+
+After an external-LLC runtime download, write the boot image on the runtime
+host before starting `fpga-host`:
+
+```sh
+make write_flash \
+  FPGA_BACKEND=uvhs \
+  REMOTE=<FPGA_RUNTIME_REMOTE> \
+  REMOTE_DIR=$REMOTE_ROOT \
+  CPU=<CPU> SUFFIX=<tag> \
+  WORKLOAD=<BOOTRAM_BIN>
+```
+
+The UVHS flash command performs a complete readback internally. A separate
+manual readback is needed only when diagnosing a write or boot failure.
+
+When the physical UART is attached to the runtime host, create the bridge from
+the FPGA host. The target maps the remote UART to `/tmp/fpga-remote-uart`,
+exports `FPGA_UART_PORT`, and opens the shell used to run `fpga-host`:
+
+```sh
+ssh <FPGA_HOST_REMOTE>
+cd $REMOTE_ROOT/env-scripts/fpga_diff
+make bind_uart \
+  REMOTE=<FPGA_RUNTIME_REMOTE> \
+  REMOTE_UART_PORT=/dev/serial/by-id/<uart-device>
+```
+
+The normal host invocation points ILA commands back to the runtime host:
+
+```sh
+make run_host \
+  FPGA_BACKEND=uvhs \
+  REMOTE=<FPGA_HOST_REMOTE> \
+  REMOTE_DIR=$REMOTE_ROOT \
+  UVHS_RUNTIME=<FPGA_RUNTIME_REMOTE> \
+  FPGA_BIT_HOME=<HOST_RELEASE_DIR> \
+  WORKLOAD=<WORKLOAD_DIR> \
+  DIFF=<NEMU_SO> \
+  CPU=<CPU> SUFFIX=<tag>
+```
+
+By default, `run_host` clears ILA state and stops the UVHS runtime after the
+host exits. Set `UVHS_KEEP_RUNTIME=1` for consecutive runs, then stop the
+retained session explicitly after the final run.
+
+Check or stop a retained session from its env-scripts checkout:
 
 ```sh
 make -C env-scripts/fpga_diff runtime_status \
@@ -307,31 +379,20 @@ make -C env-scripts/fpga_diff runtime_stop \
 ```
 
 When `FPGA_BACKEND=uvhs`, `run_host` automatically sets `FPGA_ILA_ARM_CMD` and
-`FPGA_ILA_UPLOAD_CMD`. In a two-host setup, run `fpga-host` on the FPGA host and
-point the hooks at the machine that owns the UVHS runtime:
-
-```sh
-make run_host \
-  FPGA_BACKEND=uvhs \
-  REMOTE=<FPGA_HOST_REMOTE> \
-  REMOTE_DIR=$REMOTE_ROOT \
-  FPGA_BIT_HOME=<HOST_RELEASE_DIR> \
-  WORKLOAD=<WORKLOAD_DIR> \
-  DIFF=<NEMU_SO> \
-  CPU=<CPU> SUFFIX=<tag>
-```
-
-The generated commands source the runtime user's shell environment before
-calling the backend-neutral `env-scripts` ILA arm/upload targets. Backend
-dispatch and command construction stay inside `env-scripts`; playground only
-passes `FPGA_BACKEND` and `UVHS_RUNTIME`.
+`FPGA_ILA_UPLOAD_CMD`. The generated upload hook restores the sign-off clock
+and clears the trigger/capture state even when upload fails. Backend dispatch
+and command construction stay inside `env-scripts`; playground only passes
+`FPGA_BACKEND` and `UVHS_RUNTIME`.
 
 The UVHS upload creates `UvData.usdb` and `UvData.vcd` under
 `env-scripts/fpga_diff/<PRJ_NAME>/runtime-work/UHD/uvhs_ila/` on the UVHS
 runtime host. The current hook prints those remote paths but does not copy the
 files back to the FPGA host or the machine that invoked `make run_host`.
 
-With `USE_XDMA_H2C=1` (the default), the host writes only the workload `.bin` to DDR through XDMA H2C before releasing the CPU. It does not write the FPGA boot flash.
+With `USE_XDMA_H2C=1` (the default), the host writes only the workload `.bin`
+to DDR through XDMA H2C before enabling the CPU DDR path. H2C has priority in
+the memory controller, so no external `halt_soc` command is required. H2C does
+not write the FPGA boot flash.
 
 With `USE_XDMA_H2C=0`, the host writes DDR with external `FPGA_DDR_LOAD_CMD`:
 
@@ -347,7 +408,9 @@ make write_ddr \
 ### DDR Fallback / Debug Path
 
 The direct `write_ddr` target is available for manual debugging and host builds
-made with `USE_XDMA_H2C=0`; normal `run_host` uses H2C for DDR loading.
+made with `USE_XDMA_H2C=0`; normal `run_host` uses H2C for DDR loading. UVHS
+`write_ddr` uses `writemem -rtl` and keeps the CPU halted. The Vivado JTAG path
+must likewise write DDR while the SoC is halted.
 
 ### Boot Flash Path
 
