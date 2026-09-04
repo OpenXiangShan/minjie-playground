@@ -363,11 +363,12 @@ nemu:
 	cp -f "$(NEMU_SRC_SO)" "$(NEMU_OUT_SO)" 2>&1 | tee -a $(NEMU_LOG)
 	echo "NEMU ref so copied to $(NEMU_OUT_SO)" | tee -a $(NEMU_LOG)
 
-RUN_HOST_ARGS ?= -i "$$workload_bin"
-RUN_HOST_ARGS += $(if $(strip $(DIFF)),--diff $(call abs_path,$(DIFF)),--no-diff)
-RUN_HOST_ARGS += $(if $(strip $(RAM_SIZE)),--ram-size=$(RAM_SIZE),)
-RUN_HOST_ARGS += $(if $(filter 1,$(RANDOM_MEM)),--random-mem --seed=$(SEED),)
-RUN_HOST_ARGS += --cpu-axi-delay=$(AXI_DELAY)
+RUN_HOST_ARGS ?=
+override RUN_HOST_ARGS += -i "$$workload_bin"
+override RUN_HOST_ARGS += $(if $(strip $(DIFF)),--diff $(call abs_path,$(DIFF)),--no-diff)
+override RUN_HOST_ARGS += $(if $(strip $(RAM_SIZE)),--ram-size=$(RAM_SIZE),)
+override RUN_HOST_ARGS += $(if $(filter 1,$(RANDOM_MEM)),--random-mem --seed=$(SEED),)
+override RUN_HOST_ARGS += --cpu-axi-delay=$(AXI_DELAY)
 
 run_host:
 	$(call require_var,FPGA_BIT_HOME)
