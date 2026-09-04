@@ -61,7 +61,8 @@ REMOTE ?=
 REMOTE_DIR ?= $(ROOT_DIR)
 REMOTE_ENV ?= source ~/.bash_profile &&
 SSH ?= ssh
-FPGA_HOST_REMOTE ?=
+UVHS_RUNTIME ?=
+UVHS_HOST ?=
 
 FPGA_ROOT := $(if $(strip $(REMOTE)),$(REMOTE_DIR),$(ROOT_DIR))
 FPGA_DIFF_HOME := $(FPGA_ROOT)/env-scripts/fpga_diff
@@ -181,7 +182,7 @@ help:
 	@printf '%s\n' 'Vector DiffTest is enabled by default; set DIFFTEST_EXCLUDE=Vec for a no-vector build.'
 	@printf '%s\n' 'Set DIFF=/path/to/nemu-so for diff mode; leave DIFF empty for --no-diff.'
 	@printf '%s\n' 'Set FPGA_BACKEND=uvhs to use the UVHS compile, runtime, memory, reset, and ILA paths.'
-	@printf '%s\n' 'Set FPGA_HOST_REMOTE for UVHS XDMA remove/rescan and UVHS_KEEP_RUNTIME=1 for consecutive runs.'
+	@printf '%s\n' 'Set UVHS_RUNTIME/UVHS_HOST for UVHS and UVHS_KEEP_RUNTIME=1 for consecutive runs.'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Remote backend/runtime: add REMOTE=user@host REMOTE_DIR=/path/to/FpgaDiff-playground.'
 
@@ -302,16 +303,16 @@ bit:
 write_bitstream:
 
 ifeq ($(FPGA_BACKEND),uvhs)
-	$(call require_var,FPGA_HOST_REMOTE)
+	$(call require_var,UVHS_HOST)
 	@set -u; \
-		$(SSH) $(FPGA_HOST_REMOTE) 'bash -s' \
+		$(SSH) $(UVHS_HOST) 'bash -s' \
 			< "$(ROOT_DIR)/env-scripts/fpga_diff/tools/pcie-remove.sh" || exit $$?; \
 		runtime_status=0; \
 		$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) write_bitstream FPGA_BACKEND=$(FPGA_BACKEND) \
 			PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
 			FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME))) || runtime_status=$$?; \
 		rescan_status=0; \
-		$(SSH) $(FPGA_HOST_REMOTE) 'bash -s' \
+		$(SSH) $(UVHS_HOST) 'bash -s' \
 			< "$(ROOT_DIR)/env-scripts/fpga_diff/tools/pcie-rescan.sh" || rescan_status=$$?; \
 		if ((runtime_status != 0)); then exit $$runtime_status; fi; \
 		exit $$rescan_status

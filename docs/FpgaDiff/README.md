@@ -16,8 +16,8 @@ XiangShan / NutShell Verilog
   -> fpga-host loads the workload through XDMA H2C by default, then starts DiffTest
 ```
 
-For UVHS, the runtime host owns download/reset/flash/ILA and the FPGA host owns
-the Linux XDMA endpoint and `fpga-host`. The top-level download flow removes and
+For UVHS, `$UVHS_RUNTIME` owns download/reset/flash/ILA and `$UVHS_HOST` owns the
+Linux XDMA endpoint and `fpga-host`. The top-level download flow removes and
 rescans XDMA around every runtime download. See [workflow.md](./workflow.md) for
 the two-host command sequence and UART bridge.
 

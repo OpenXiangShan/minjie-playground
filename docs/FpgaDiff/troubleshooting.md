@@ -136,10 +136,9 @@ packet length/corrupted C2H data.
    Also verify that `/dev/xdma0_h2c_0` exists and that the host was built with `USE_XDMA_H2C=1`.
    If the host was intentionally built with `USE_XDMA_H2C=0`, check the log for the `external DDR load command` instead.
 
-3. **Check the write operation's reset ownership**: `write_flash` protects and
-   restores CPU execution internally. UVHS `write_ddr` and the manual Vivado
-   JTAG DDR flow require the CPU to remain halted until `reset_cpu`. H2C manages
-   CPU DDR ownership through the FPGA memory controller instead.
+3. **Check the write operation's reset ownership**: H2C and `write_flash` do not
+   require a separate `halt_soc` command. UVHS `write_ddr` and the manual Vivado
+   JTAG DDR flow require the CPU to remain halted until `reset_cpu`.
 
 4. **If you are using the UART/manual path, verify the order**:
     Keep the UART terminal open, write the external-LLC flash image when needed,
@@ -159,7 +158,7 @@ packet length/corrupted C2H data.
 6. **Check the reset sequence**:
     `write_bitstream` initializes and releases the design. After that:
     Host path: `fpga-host` random-initializes DDR if requested, then loads the workload through H2C, then releases CPU reset.
-    UART/manual path: a second `reset_cpu` should be called after `halt_soc`, any boot-flash write, and `write_ddr`:
+    UART/manual path: a second `reset_cpu` should be called after `halt_soc` and `write_ddr`:
 
     ```sh
     make reset_cpu REMOTE=fpga REMOTE_DIR=$FPGA_ROOT FPGA_BIT_HOME=$BIT_ROOT

@@ -2,14 +2,14 @@
 
 This document describes the end-to-end FPGA DiffTest flow. Each step lists optional parameters first, then a matching example.
 
-## Common Placeholders
+## Common Placeholders And Hosts
 
 - `<DESIGN>`: top-level design target such as `xiangshan` or `nutshell`
 - `<XS_CONFIG>`: XiangShan config used for `make verilog xiangshan`
 - `<FPGA_BUILD_REMOTE>`: remote machine used by the selected FPGA backend
-- `<FPGA_REMOTE>`: remote FPGA host
-- `<FPGA_RUNTIME_REMOTE>`: FPGA host for Vivado, or the UVHS runtime host for UVHS
-- `<FPGA_HOST_REMOTE>`: host that owns XDMA and runs `fpga-host`
+- `<FPGA_REMOTE>`: remote FPGA host for the Vivado flow
+- `$UVHS_RUNTIME`: UVHS runtime host that owns the database, UART, and ILA
+- `$UVHS_HOST`: UVHS FPGA host that owns XDMA and runs `fpga-host`
 - `<CPU>`: backend CPU name, such as `kmh` or `nutshell`
 - `<NEMU_CONFIG>`: NEMU defconfig name
 - `<TARGET>`: workload-builder target such as `linux/hello` or `am/hello`
@@ -244,7 +244,7 @@ rsync -a --delete ready-to-run/ <FPGA_REMOTE>:$REMOTE_ROOT/ready-to-run/
 | `REMOTE` | empty | Remote execution target |
 | `REMOTE_DIR` | repository root | Repository path on the remote target |
 | `FPGA_BACKEND` | `vivado` | Use the same backend selected for `make bit` |
-| `FPGA_HOST_REMOTE` | empty | XDMA host refreshed around every UVHS runtime download |
+| `UVHS_HOST` | empty | XDMA host refreshed around every UVHS runtime download |
 | `UVHS_RUNTIME` | empty | UVHS runtime host used by host-side ILA and cleanup commands |
 | `UVHS_KEEP_RUNTIME` | `0` | Set to `1` to retain UVHS for consecutive `run_host` invocations |
 | `FPGA_BIT_HOME` | none | Bitstream bundle directory |
@@ -263,27 +263,26 @@ export BIT_ROOT=$REMOTE_ROOT/bitstream/$BIT_TAG
 
 make write_bitstream \
   FPGA_BACKEND=vivado \
-  REMOTE=<FPGA_HOST_REMOTE> \
+  REMOTE=<FPGA_REMOTE> \
   REMOTE_DIR=$REMOTE_ROOT \
   FPGA_BIT_HOME=$BIT_ROOT
 
 make run_host \
   FPGA_BACKEND=vivado \
-  REMOTE=<FPGA_HOST_REMOTE> \
+  REMOTE=<FPGA_REMOTE> \
   REMOTE_DIR=$REMOTE_ROOT \
   FPGA_BIT_HOME=$BIT_ROOT \
   WORKLOAD=$REMOTE_ROOT/ready-to-run/$WORKLOAD_TAG \
   DIFF=$REMOTE_ROOT/ready-to-run/$NEMU_CONFIG/riscv64-nemu-interpreter-so
 ```
 
-An external-LLC image also requires its boot ROM in the writable boot flash.
-After every `write_bitstream`, write `<BOOTRAM_BIN>` before `run_host`. The
-backend-neutral target protects the CPU while the flash contents change:
+An external-LLC Vivado image also requires its boot ROM in the writable boot
+flash. After every `write_bitstream`, write `<BOOTRAM_BIN>` before `run_host`:
 
 ```sh
 make write_flash \
-  FPGA_BACKEND=<FPGA_BACKEND> \
-  REMOTE=<FPGA_RUNTIME_REMOTE> \
+  FPGA_BACKEND=vivado \
+  REMOTE=<FPGA_REMOTE> \
   REMOTE_DIR=$REMOTE_ROOT \
   FPGA_BIT_HOME=$BIT_ROOT \
   WORKLOAD=<BOOTRAM_BIN>
@@ -300,21 +299,21 @@ release containing `fpga-host`.
 
 ### UVHS Runtime And Host
 
-The UVHS flow uses two machines. The runtime host owns the UVHS database,
-reset, flash, DDR backdoor, physical UART, and ILA. The FPGA host owns the Linux
-PCIe endpoint, XDMA driver and device nodes, and `fpga-host`.
+The UVHS flow uses two machines. `$UVHS_RUNTIME` owns the UVHS database, reset,
+flash, DDR backdoor, physical UART, and ILA. `$UVHS_HOST` owns the Linux PCIe
+endpoint, XDMA driver and device nodes, and `fpga-host`.
 
-Every top-level UVHS `write_bitstream` removes the `10ee:9048` endpoint on the
-FPGA host, downloads the database on the runtime host, then rescans and checks
-XDMA on the FPGA host. The remove step refuses to continue while `fpga-host` is
+Every top-level UVHS `write_bitstream` removes the `10ee:9048` endpoint on
+`$UVHS_HOST`, downloads the database on `$UVHS_RUNTIME`, then rescans and checks
+XDMA on `$UVHS_HOST`. The remove step refuses to continue while `fpga-host` is
 running. The rescan step prints the endpoint, bound driver, device nodes, and
 permissions.
 
 ```sh
 make write_bitstream \
   FPGA_BACKEND=uvhs \
-  REMOTE=<FPGA_RUNTIME_REMOTE> \
-  FPGA_HOST_REMOTE=<FPGA_HOST_REMOTE> \
+  REMOTE=$UVHS_RUNTIME \
+  UVHS_HOST=$UVHS_HOST \
   REMOTE_DIR=$REMOTE_ROOT \
   CPU=<CPU> SUFFIX=<tag>
 ```
@@ -329,7 +328,7 @@ host before starting `fpga-host`:
 ```sh
 make write_flash \
   FPGA_BACKEND=uvhs \
-  REMOTE=<FPGA_RUNTIME_REMOTE> \
+  REMOTE=$UVHS_RUNTIME \
   REMOTE_DIR=$REMOTE_ROOT \
   CPU=<CPU> SUFFIX=<tag> \
   WORKLOAD=<BOOTRAM_BIN>
@@ -343,10 +342,10 @@ the FPGA host. The target maps the remote UART to `/tmp/fpga-remote-uart`,
 exports `FPGA_UART_PORT`, and opens the shell used to run `fpga-host`:
 
 ```sh
-ssh <FPGA_HOST_REMOTE>
+ssh "$UVHS_HOST"
 cd $REMOTE_ROOT/env-scripts/fpga_diff
 make bind_uart \
-  REMOTE=<FPGA_RUNTIME_REMOTE> \
+  REMOTE=fpga-runtime \
   REMOTE_UART_PORT=/dev/serial/by-id/<uart-device>
 ```
 
@@ -355,9 +354,9 @@ The normal host invocation points ILA commands back to the runtime host:
 ```sh
 make run_host \
   FPGA_BACKEND=uvhs \
-  REMOTE=<FPGA_HOST_REMOTE> \
+  REMOTE=$UVHS_HOST \
   REMOTE_DIR=$REMOTE_ROOT \
-  UVHS_RUNTIME=<FPGA_RUNTIME_REMOTE> \
+  UVHS_RUNTIME=$UVHS_RUNTIME \
   FPGA_BIT_HOME=<HOST_RELEASE_DIR> \
   WORKLOAD=<WORKLOAD_DIR> \
   DIFF=<NEMU_SO> \
@@ -381,8 +380,8 @@ make -C env-scripts/fpga_diff runtime_stop \
 When `FPGA_BACKEND=uvhs`, `run_host` automatically sets `FPGA_ILA_ARM_CMD` and
 `FPGA_ILA_UPLOAD_CMD`. The generated upload hook restores the sign-off clock
 and clears the trigger/capture state even when upload fails. Backend dispatch
-and command construction stay inside `env-scripts`; playground only passes
-`FPGA_BACKEND` and `UVHS_RUNTIME`.
+and command construction stay inside `env-scripts`; playground passes
+`FPGA_BACKEND`, `UVHS_RUNTIME`, and `UVHS_HOST`.
 
 The UVHS upload creates `UvData.usdb` and `UvData.vcd` under
 `env-scripts/fpga_diff/<PRJ_NAME>/runtime-work/UHD/uvhs_ila/` on the UVHS
@@ -398,8 +397,8 @@ With `USE_XDMA_H2C=0`, the host writes DDR with external `FPGA_DDR_LOAD_CMD`:
 
 ```sh
 make write_ddr \
-  FPGA_BACKEND=<FPGA_BACKEND> \
-  REMOTE=<FPGA_RUNTIME_REMOTE> \
+  FPGA_BACKEND=uvhs \
+  REMOTE=$UVHS_RUNTIME \
   REMOTE_DIR=$REMOTE_ROOT \
   FPGA_BIT_HOME=$BIT_ROOT \
   WORKLOAD=$REMOTE_ROOT/ready-to-run/$WORKLOAD_TAG/$WORKLOAD_TAG.txt
@@ -419,8 +418,8 @@ For designs that require a boot image in flash, write it after every
 
 ```sh
 make write_flash \
-  FPGA_BACKEND=<FPGA_BACKEND> \
-  REMOTE=<FPGA_RUNTIME_REMOTE> \
+  FPGA_BACKEND=uvhs \
+  REMOTE=$UVHS_RUNTIME \
   REMOTE_DIR=$REMOTE_ROOT \
   FPGA_BIT_HOME=$BIT_ROOT \
   WORKLOAD=<BOOTRAM_BIN>
