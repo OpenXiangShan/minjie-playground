@@ -150,6 +150,7 @@ DIFF ?=
 RAM_SIZE ?= $(if $(filter nutshell,$(DESIGN)),2GB,16GB)
 RANDOM_MEM ?= 1
 SEED ?= 1234
+AXI_DELAY ?= 0
 RUN_LOG ?= $(BUILD_DIR)/run-log/run-$$(date +%Y%m%d-%H%M%S).log
 
 .PHONY: help init link_difftest clean verilog release host check_project_name project bit \
@@ -362,10 +363,12 @@ nemu:
 	cp -f "$(NEMU_SRC_SO)" "$(NEMU_OUT_SO)" 2>&1 | tee -a $(NEMU_LOG)
 	echo "NEMU ref so copied to $(NEMU_OUT_SO)" | tee -a $(NEMU_LOG)
 
-RUN_HOST_ARGS ?= -i "$$workload_bin" \
-	$(if $(strip $(DIFF)),--diff $(call abs_path,$(DIFF)),--no-diff) \
-	$(if $(strip $(RAM_SIZE)),--ram-size=$(RAM_SIZE),) \
-	$(if $(filter 1,$(RANDOM_MEM)),--random-mem --seed=$(SEED),)
+RUN_HOST_ARGS ?=
+override RUN_HOST_ARGS += -i "$$workload_bin"
+override RUN_HOST_ARGS += $(if $(strip $(DIFF)),--diff $(call abs_path,$(DIFF)),--no-diff)
+override RUN_HOST_ARGS += $(if $(strip $(RAM_SIZE)),--ram-size=$(RAM_SIZE),)
+override RUN_HOST_ARGS += $(if $(filter 1,$(RANDOM_MEM)),--random-mem --seed=$(SEED),)
+override RUN_HOST_ARGS += --cpu-axi-delay=$(AXI_DELAY)
 
 run_host:
 	$(call require_var,FPGA_BIT_HOME)
