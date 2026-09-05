@@ -56,16 +56,18 @@ NEMU_OUT_SO ?= $(NEMU_OUT_DIR)/$(NEMU_SO_NAME)
 NEMU_SRC_SO ?= $(NEMU_HOME)/build/$(NEMU_SO_NAME)
 NEMU_LOG ?= $(BUILD_LOG_DIR)/nemu-$(NEMU_CONFIG)-$(LOG_STAMP).log
 
-# Only Vivado/FPGA run-side commands use REMOTE. Other build targets run locally.
+# REMOTE selects an optional remote FPGA build machine. Run-side commands use
+# FPGA_HOST and FPGA_RUNTIME instead.
 REMOTE ?=
 REMOTE_DIR ?= $(ROOT_DIR)
 REMOTE_ENV ?= source ~/.bash_profile &&
 SSH ?= ssh
-UVHS_RUNTIME ?=
-UVHS_HOST ?=
+FPGA_HOST ?=
+FPGA_RUNTIME ?= $(FPGA_HOST)
 
 FPGA_ROOT := $(if $(strip $(REMOTE)),$(REMOTE_DIR),$(ROOT_DIR))
 FPGA_DIFF_HOME := $(FPGA_ROOT)/env-scripts/fpga_diff
+FPGA_RUN_DIFF_HOME := $(REMOTE_DIR)/env-scripts/fpga_diff
 FPGA_BUILD_LOG_DIR ?= $(FPGA_ROOT)/build/build-log
 
 CPU ?= $(if $(filter $(DESIGN),nutshell),nutshell,kmh)
@@ -76,7 +78,7 @@ override SUFFIX := nodiff$(if $(strip $(SUFFIX)),-$(strip $(SUFFIX)),)
 endif
 endif
 FPGA_BACKEND ?= vivado
-UVHS_KEEP_RUNTIME ?= 0
+FPGA_KEEP_RUNTIME ?= 0
 PRJ_NAME ?= fpga_$(FPGA_BACKEND)_$(CPU)$(if $(strip $(SUFFIX)),-$(strip $(SUFFIX)),)
 export PRJ_NAME
 BIT_SRC_DIR ?= $(shell cat "$(RELEASE_LATEST_PATH)" 2>/dev/null)
@@ -95,6 +97,10 @@ endef
 
 define remote
 $(if $(strip $(REMOTE)),$(SSH) $(REMOTE) 'cd $(REMOTE_DIR) && $(REMOTE_ENV) $(1)',$(1))
+endef
+
+define fpga_remote
+$(SSH) $(1) 'cd $(REMOTE_DIR) && $(REMOTE_ENV) $(2)'
 endef
 
 define require_var
@@ -182,9 +188,10 @@ help:
 	@printf '%s\n' 'Vector DiffTest is enabled by default; set DIFFTEST_EXCLUDE=Vec for a no-vector build.'
 	@printf '%s\n' 'Set DIFF=/path/to/nemu-so for diff mode; leave DIFF empty for --no-diff.'
 	@printf '%s\n' 'Set FPGA_BACKEND=uvhs to use the UVHS compile, runtime, memory, reset, and ILA paths.'
-	@printf '%s\n' 'Set UVHS_RUNTIME/UVHS_HOST for UVHS and UVHS_KEEP_RUNTIME=1 for consecutive runs.'
+	@printf '%s\n' 'Set FPGA_HOST and optionally FPGA_RUNTIME.'
+	@printf '%s\n' 'Use FPGA_KEEP_RUNTIME=1 for consecutive runs.'
 	@printf '%s\n' ''
-	@printf '%s\n' 'Remote backend/runtime: add REMOTE=user@host REMOTE_DIR=/path/to/FpgaDiff-playground.'
+	@printf '%s\n' 'Remote build: add REMOTE=user@host REMOTE_DIR=/path/to/FpgaDiff-playground.'
 
 # Keep XS/Nut difftest as symlinks to the top-level difftest; otherwise
 # their submodule init checks out the shared difftest to their gitlink commits.
@@ -301,49 +308,42 @@ bit:
 		cp -a "$$release_src" "$(BIT_OUT_DIR)/" && \
 		find "$(BIT_OUT_DIR)" -maxdepth 1 -mindepth 1 | sort | tee -a $(BIT_LOG))
 write_bitstream:
-
-ifeq ($(FPGA_BACKEND),uvhs)
-	$(call require_var,UVHS_HOST)
-	@set -u; \
-		$(SSH) $(UVHS_HOST) 'bash -s' \
-			< "$(ROOT_DIR)/env-scripts/fpga_diff/tools/pcie-remove.sh" || exit $$?; \
-		runtime_status=0; \
-		$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) write_bitstream FPGA_BACKEND=$(FPGA_BACKEND) \
-			PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
-			FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME))) || runtime_status=$$?; \
-		rescan_status=0; \
-		$(SSH) $(UVHS_HOST) 'bash -s' \
-			< "$(ROOT_DIR)/env-scripts/fpga_diff/tools/pcie-rescan.sh" || rescan_status=$$?; \
-		if ((runtime_status != 0)); then exit $$runtime_status; fi; \
-		exit $$rescan_status
-else
-	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) write_bitstream FPGA_BACKEND=$(FPGA_BACKEND) \
+	$(call require_var,FPGA_HOST)
+	$(MAKE) -C "$(ROOT_DIR)/env-scripts/fpga_diff" write_bitstream \
+		FPGA_BACKEND=$(FPGA_BACKEND) FPGA_HOST="$(FPGA_HOST)" \
+		FPGA_RUNTIME="$(FPGA_RUNTIME)" \
+		FPGA_REMOTE_DIR="$(FPGA_RUN_DIFF_HOME)" \
+		FPGA_REMOTE_ENV="$(REMOTE_ENV)" FPGA_SSH="$(SSH)" \
 		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
-		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
-endif
+		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME))
 
 write_flash:
+	$(call require_var,FPGA_HOST)
 	$(call require_var,WORKLOAD)
-	$(call remote,bootrom=$(call abs_path,$(WORKLOAD)); \
-		$(MAKE) -C $(FPGA_DIFF_HOME) write_flash FPGA_BACKEND=$(FPGA_BACKEND) \
+	$(call fpga_remote,$(FPGA_RUNTIME),bootrom=$(call abs_path,$(WORKLOAD)); \
+		$(MAKE) -C $(FPGA_RUN_DIFF_HOME) write_flash FPGA_BACKEND=$(FPGA_BACKEND) \
 		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
 		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)) WORKLOAD="$$bootrom")
 
 write_ddr:
+	$(call require_var,FPGA_HOST)
 	$(call require_var,WORKLOAD)
-	$(call remote,workload=$(call abs_path,$(WORKLOAD)); \
+	$(call fpga_remote,$(FPGA_RUNTIME),workload=$(call abs_path,$(WORKLOAD)); \
 		test -d "$$workload" && workload=$$(echo "$$workload"/*.txt) || true; \
-		$(MAKE) -C $(FPGA_DIFF_HOME) write_ddr FPGA_BACKEND=$(FPGA_BACKEND) \
+		$(MAKE) -C $(FPGA_RUN_DIFF_HOME) write_ddr FPGA_BACKEND=$(FPGA_BACKEND) \
 		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
 		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)) WORKLOAD="$$workload")
 
 reset_cpu:
-	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) reset_cpu FPGA_BACKEND=$(FPGA_BACKEND) \
+	$(call require_var,FPGA_HOST)
+	$(call fpga_remote,$(FPGA_RUNTIME),$(MAKE) -C $(FPGA_RUN_DIFF_HOME) reset_cpu \
+		FPGA_BACKEND=$(FPGA_BACKEND) \
 		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
 		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
 
 ila_clear:
-	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) $@ FPGA_BACKEND=$(FPGA_BACKEND) \
+	$(call require_var,FPGA_HOST)
+	$(call fpga_remote,$(FPGA_RUNTIME),$(MAKE) -C $(FPGA_RUN_DIFF_HOME) $@ FPGA_BACKEND=$(FPGA_BACKEND) \
 		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
 		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
 
@@ -389,15 +389,16 @@ RUN_HOST_ARGS ?= -i "$$workload_bin" \
 	$(if $(filter 1,$(RANDOM_MEM)),--random-mem --seed=$(SEED),)
 
 run_host:
+	$(call require_var,FPGA_HOST)
 	$(call require_var,FPGA_BIT_HOME)
 	$(call require_var,WORKLOAD)
-	@case "$(UVHS_KEEP_RUNTIME)" in \
+	@case "$(FPGA_KEEP_RUNTIME)" in \
 		0|1) ;; \
-		*) echo "ERROR: UVHS_KEEP_RUNTIME must be 0 or 1" >&2; exit 2 ;; \
+		*) echo "ERROR: FPGA_KEEP_RUNTIME must be 0 or 1" >&2; exit 2 ;; \
 	esac
 	@run_log="$(RUN_LOG)"; mkdir -p "$$(dirname "$$run_log")"; \
 	exec > >(setsid tee "$$run_log") 2>&1; \
-	$(call remote,\
+	$(call fpga_remote,$(FPGA_HOST),\
 		fpga_bit_home=$(call abs_path,$(FPGA_BIT_HOME)); \
 		workload_home=$(call abs_path,$(WORKLOAD)); \
 		workload_bin=$$(echo "$$workload_home"/*.bin); \
@@ -406,46 +407,40 @@ run_host:
 		test -n "$$host" || host=$$(echo "$$fpga_bit_home"/*/build/fpga-host); \
 		printf -v ddr_load_cmd "%q %q %q" bash -lc "\
 			$(REMOTE_ENV) \
-				$(MAKE) -C $(FPGA_DIFF_HOME) write_ddr FPGA_BACKEND=$(FPGA_BACKEND) \
+				$(MAKE) -C $(FPGA_RUN_DIFF_HOME) write_ddr FPGA_BACKEND=$(FPGA_BACKEND) \
 			PRJ_NAME=$(PRJ_NAME) CPU=$(CPU) SUFFIX=$(SUFFIX) NO_DIFF=$(NO_DIFF) \
 			FPGA_BIT_HOME=$$fpga_bit_home \
 			WORKLOAD=$$workload_txt"; \
 		host_env=("FPGA_DDR_LOAD_CMD=$$ddr_load_cmd"); \
-		ila_env=$$($(MAKE) -s --no-print-directory -C $(FPGA_DIFF_HOME) ila_host_env \
+		fpga_runtime="$(FPGA_RUNTIME)"; \
+		[ "$$fpga_runtime" != "$(FPGA_HOST)" ] || fpga_runtime=; \
+		ila_env=$$($(MAKE) -s --no-print-directory -C $(FPGA_RUN_DIFF_HOME) ila_host_env \
 			FPGA_BACKEND=$(FPGA_BACKEND) PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) \
 			SUFFIX=$(SUFFIX) NO_DIFF=$(NO_DIFF) \
-			UVHS_RUNTIME="$(UVHS_RUNTIME)"); \
+			FPGA_RUNTIME="$$fpga_runtime" \
+			UVHS_ILA_GATED_CLOCK="$(UVHS_ILA_GATED_CLOCK)"); \
 		eval "$$ila_env"; \
 		[ -z "$${FPGA_ILA_ARM_CMD:-}" ] || host_env+=("FPGA_ILA_ARM_CMD=$$FPGA_ILA_ARM_CMD"); \
 		[ -z "$${FPGA_ILA_UPLOAD_CMD:-}" ] || host_env+=("FPGA_ILA_UPLOAD_CMD=$$FPGA_ILA_UPLOAD_CMD"); \
 		cleanup_status=0; cleanup_done=0; \
-		cleanup_uvhs() { \
-			[ "$(FPGA_BACKEND)" = uvhs ] || return 0; \
+		cleanup_runtime() { \
 			[ "$$cleanup_done" = 0 ] || return 0; \
 			cleanup_done=1; \
-			if [ -n "$${FPGA_ILA_CLEAR_CMD:-}" ]; then \
-				eval "$$FPGA_ILA_CLEAR_CMD"; command_status=$$?; \
-				if ((command_status != 0)); then \
-					echo "ERROR: failed to clear UVHS ILA (status $$command_status)" >&2; \
-					cleanup_status=$$command_status; \
-				fi; \
-			fi; \
-			if [ "$(UVHS_KEEP_RUNTIME)" = 0 ]; then \
-				if [ -z "$${FPGA_RUNTIME_STOP_CMD:-}" ]; then \
-					echo "ERROR: UVHS runtime stop command is unavailable" >&2; \
-					cleanup_status=1; \
-				else \
-					eval "$$FPGA_RUNTIME_STOP_CMD"; command_status=$$?; \
-					if ((command_status != 0)); then \
-						echo "ERROR: failed to stop UVHS runtime (status $$command_status)" >&2; \
-						cleanup_status=$$command_status; \
-					fi; \
-				fi; \
+			$(MAKE) --no-print-directory -C $(FPGA_RUN_DIFF_HOME) runtime_cleanup \
+				FPGA_BACKEND="$(FPGA_BACKEND)" FPGA_HOST="$(FPGA_HOST)" \
+				FPGA_RUNTIME="$(FPGA_RUNTIME)" FPGA_REMOTE_DIR="$(FPGA_RUN_DIFF_HOME)" \
+				FPGA_REMOTE_ENV="$(REMOTE_ENV)" FPGA_SSH=ssh \
+				FPGA_KEEP_RUNTIME="$(FPGA_KEEP_RUNTIME)" \
+				FPGA_BIT_HOME="$$fpga_bit_home" PRJ_NAME="$(PRJ_NAME)" \
+				CPU="$(CPU)" SUFFIX="$(SUFFIX)"; command_status=$$?; \
+			if ((command_status != 0)); then \
+				echo "ERROR: failed to clean up FPGA runtime (status $$command_status)" >&2; \
+				cleanup_status=$$command_status; \
 			fi; \
 		}; \
-		trap cleanup_uvhs EXIT; trap "exit 130" INT; trap "exit 143" TERM; \
+		trap cleanup_runtime EXIT; trap "exit 130" INT; trap "exit 143" TERM; \
 		env "$${host_env[@]}" "$$host" $(RUN_HOST_ARGS); host_status=$$?; \
-		cleanup_uvhs; trap - EXIT INT TERM; \
+		cleanup_runtime; trap - EXIT INT TERM; \
 		if ((host_status != 0)); then exit $$host_status; fi; \
 		exit $$cleanup_status)
 
