@@ -346,9 +346,12 @@ exports `FPGA_UART_PORT`, and opens the shell used to run `fpga-host`:
 ssh "$UVHS_HOST"
 cd $REMOTE_ROOT/env-scripts/fpga_diff
 make bind_uart \
-  REMOTE=fpga-runtime \
+  REMOTE=<user@fpga-runtime> \
   REMOTE_UART_PORT=/dev/serial/by-id/<uart-device>
 ```
+
+Replace <user@fpga-runtime> with an SSH target resolvable from $UVHS_HOST; it
+may be a configured alias or a user@hostname destination.
 
 The normal host invocation points ILA commands back to the runtime host:
 
