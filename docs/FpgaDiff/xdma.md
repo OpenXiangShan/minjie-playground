@@ -130,8 +130,10 @@ If `run_host` fails before printing `XDMA H2C queued`, verify that the H2C node 
 For a DiffTest bitstream, the env-scripts `write_bitstream` flow removes the
 endpoint on `$FPGA_HOST` immediately before programming on `$FPGA_RUNTIME` and
 always attempts a rescan afterward. The rescan waits for `xdma-chr`, then prints
-the endpoint and recreated device nodes. Run the repository scripts as a normal
-user; only their internal sysfs `tee` operations require sudo.
+the endpoint, live PCI configuration value, and recreated device nodes. An
+all-`ff` configuration read is treated as a failed rescan even if stale nodes
+remain. Run the repository scripts as a normal user; only their internal sysfs
+`tee` operations require sudo.
 
 ## 6. Troubleshooting
 
