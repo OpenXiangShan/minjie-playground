@@ -246,6 +246,7 @@ rsync -a --delete ready-to-run/ <FPGA_REMOTE>:$REMOTE_ROOT/ready-to-run/
 | `FPGA_BACKEND` | `vivado` | Use the same backend selected for `make bit` |
 | `UVHS_HOST` | empty | XDMA host refreshed around every UVHS runtime download |
 | `UVHS_RUNTIME` | empty | UVHS runtime host used by host-side ILA and cleanup commands |
+| `UVHS_ILA_GATED_CLOCK` | empty | Comma-separated gated capture clocks from `query -capture` |
 | `UVHS_KEEP_RUNTIME` | `0` | Set to `1` to retain UVHS for consecutive `run_host` invocations |
 | `FPGA_BIT_HOME` | none | Bitstream bundle directory |
 | `WORKLOAD` | none | Workload directory containing `.bin` and `.txt` |
@@ -362,6 +363,11 @@ make run_host \
   DIFF=<NEMU_SO> \
   CPU=<CPU> SUFFIX=<tag>
 ```
+
+If `query -capture` reports enabled stations on gated clocks, set
+`UVHS_ILA_GATED_CLOCK` to their exact names, separated by commas. Without
+these names, the runtime can arm the ILA trigger but will reject the condition
+because the gated station frequencies are not configured.
 
 By default, `run_host` clears ILA state and stops the UVHS runtime after the
 host exits. Set `UVHS_KEEP_RUNTIME=1` for consecutive runs, then stop the
