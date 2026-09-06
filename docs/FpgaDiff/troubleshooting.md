@@ -161,8 +161,8 @@ packet length/corrupted C2H data.
     UART/manual path: a second `reset_cpu` should be called after `halt_soc` and `write_ddr`:
 
     ```sh
-    make reset_cpu FPGA_HOST=$FPGA_HOST REMOTE_DIR=$FPGA_ROOT \
-      FPGA_BIT_HOME=$BIT_ROOT
+    make reset_cpu FPGA_RUNTIME=$FPGA_RUNTIME FPGA_RUNTIME_DIR=$FPGA_RUNTIME_DIR \
+      FPGA_RUNTIME_HOME=$FPGA_RUNTIME_HOME FPGA_BIT_HOME=$BIT_ROOT
     ```
 
 7. **Try a simpler workload**: If a Linux workload hangs, try an AM bare-metal test to isolate the issue:

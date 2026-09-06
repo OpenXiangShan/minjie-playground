@@ -7,13 +7,15 @@ This document describes the end-to-end FPGA DiffTest flow. Each step lists optio
 - `<DESIGN>`: top-level design target such as `xiangshan` or `nutshell`
 - `<XS_CONFIG>`: XiangShan config used for `make verilog xiangshan`
 - `<FPGA_BUILD_REMOTE>`: remote machine used by the selected FPGA backend
-- `$FPGA_HOST`: required host that owns XDMA and runs `fpga-host`
+- `$FPGA_HOST`: host that owns XDMA and runs `fpga-host`; empty means local
 - `$FPGA_RUNTIME`: programming/runtime host; defaults to `$FPGA_HOST`
+- `$FPGA_HOST_DIR`: absolute Minjie checkout path on `$FPGA_HOST`
+- `$FPGA_RUNTIME_DIR`: absolute Minjie checkout path on `$FPGA_RUNTIME`
+- `$FPGA_RUNTIME_HOME`: absolute copied UVHS project path containing `hw.dat`
 - `<CPU>`: backend CPU name, such as `kmh` or `nutshell`
 - `<NEMU_CONFIG>`: NEMU defconfig name
 - `<TARGET>`: workload-builder target such as `linux/hello` or `am/hello`
 - `<WORKLOAD_TAG>`: workload output directory name, typically `<DESIGN>-$(subst /,-,$(TARGET))`
-- `<REMOTE_ROOT>`: remote repository path, typically `/path/to/minjie-playground`
 - `<BIT_TAG>`: bitstream bundle directory name under `bitstream/`
 - `<BOOTRAM_BIN>`: raw boot image to stage in the JTAG boot flash
 - `<FPGA_BACKEND>`: FPGA implementation/runtime backend, `vivado` or `uvhs`
@@ -94,6 +96,9 @@ make host $DESIGN FPGA_HOST_HOME=$RELEASE_PATH
 
 Output: `$RELEASE_PATH/build/fpga-host`
 
+The target also prints `FPGA_HOST_HOME` and `FPGA_HOST_BINARY` with absolute
+paths so the completed release can be copied without rediscovering it.
+
 The default host build enables `CONFIG_USE_XDMA_H2C`, so `fpga-host` writes the workload image to DDR through `/dev/xdma0_h2c_0`. This H2C path does not program the FPGA boot flash.
 The external DDR loader is still available by rebuilding the host with `USE_XDMA_H2C=0`.
 
@@ -103,11 +108,9 @@ The external DDR loader is still available by rebuilding the host with `USE_XDMA
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REMOTE` | empty | Remote host for the selected FPGA backend |
-| `REMOTE_DIR` | repository root | Repository path on the remote host |
-| `REMOTE_ENV` | `source ~/.bash_profile &&` | Remote environment setup command |
+| `REMOTE` | empty | Optional NFS-sharing FPGA build host |
+| `REMOTE_ENV` | `source ~/.bashrc &&` | Build-host environment setup command |
 | `FPGA_BACKEND` | `vivado` | Select `vivado` or `uvhs` for FPGA build and runtime commands |
-| `PRJ_NAME` | `fpga_<backend>_<cpu>[-<suffix>]` | Stable project/work-directory name used by build and runtime targets |
 | `BIT_SRC_DIR` | latest release | Release directory used for synthesis |
 | `SUFFIX` | empty | Suffix used by the default project name |
 | `BIT_TAG` | `<design>-<timestamp>` | Bitstream bundle directory name under `bitstream/` |
@@ -119,11 +122,14 @@ The external DDR loader is still available by rebuilding the host with `USE_XDMA
 make bit \
   $DESIGN \
   FPGA_BACKEND=<FPGA_BACKEND> \
-  REMOTE=<FPGA_BUILD_REMOTE> \
-  REMOTE_DIR=/path/to/minjie-playground
+  REMOTE=<FPGA_BUILD_REMOTE>
 
 export BIT_TAG=<BIT_TAG>
 ```
+
+`REMOTE` is optional. When set, the build host enters the same absolute checkout
+path visible through NFS and sources `~/.bashrc`. `PRJ_NAME` is always derived as
+`fpga_<backend>_<cpu>[-<suffix>]`.
 
 With `FPGA_BACKEND=vivado`, output is:
 
@@ -157,8 +163,7 @@ The external-LLC RTL file list must accompany the RTL generated with
 make bit xiangshan \
   FPGA_BACKEND=<FPGA_BACKEND> \
   RTL_INCLUDE=/path/to/external_llc.f \
-  REMOTE=<FPGA_BUILD_REMOTE> \
-  REMOTE_DIR=/path/to/minjie-playground
+  REMOTE=<FPGA_BUILD_REMOTE>
 ```
 
 The `RTL_INCLUDE` path must be visible on the build host. For a project-only
@@ -223,30 +228,35 @@ AM and Linux workload details are described separately in [workload.md](./worklo
 |----------|---------|-------------|
 | `FPGA_HOST` | none | Host receiving release and workload artifacts |
 | `FPGA_RUNTIME` | `$FPGA_HOST` | Runtime receiving UVHS database and boot image when paths are not shared |
-| `<REMOTE_ROOT>` | `/path/to/minjie-playground` | Repository path on the FPGA machines |
+| `FPGA_HOST_DIR` | current checkout | Absolute Minjie checkout path on the FPGA host |
+| `FPGA_RUNTIME_DIR` | `$FPGA_HOST_DIR` | Absolute Minjie checkout path on the runtime host |
 
 ### Example
 
 ```sh
-export REMOTE_ROOT=/path/to/minjie-playground
+export FPGA_HOST_DIR=/path/to/minjie-playground
+export FPGA_RUNTIME_DIR=/path/to/minjie-playground
 
-ssh "$FPGA_HOST" "mkdir -p $REMOTE_ROOT/bitstream $REMOTE_ROOT/ready-to-run"
-rsync -a --delete bitstream/$BIT_TAG/ "$FPGA_HOST:$REMOTE_ROOT/bitstream/$BIT_TAG/"
-rsync -a --delete ready-to-run/ "$FPGA_HOST:$REMOTE_ROOT/ready-to-run/"
+ssh "$FPGA_HOST" "mkdir -p $FPGA_HOST_DIR/bitstream $FPGA_HOST_DIR/ready-to-run"
+rsync -a --delete bitstream/$BIT_TAG/ \
+  "$FPGA_HOST:$FPGA_HOST_DIR/bitstream/$BIT_TAG/"
+rsync -a --delete ready-to-run/ "$FPGA_HOST:$FPGA_HOST_DIR/ready-to-run/"
 ```
 
-When a UVHS build machine and `$FPGA_RUNTIME` do not share storage, sync the
-selected `<PRJ_NAME>/hw.dat` directory to the matching env-scripts project path
-on `$FPGA_RUNTIME`. External-LLC flows must also place `<BOOTRAM_BIN>` on the
-runtime host before `write_flash`. Keep deployment separate from programming so
-an incomplete copy cannot begin a board operation.
+`make bit` prints `FPGA_BIT_HOME`, while the UVHS backend additionally prints
+`FPGA_RUNTIME_HOME`. Copy the former to `$FPGA_HOST`; copy the latter to
+`$FPGA_RUNTIME` when its storage is not shared with the build machine. The
+runtime path supplied as `FPGA_RUNTIME_HOME` is then enough for env-scripts to
+find `hw.dat` and its runtime state. External-LLC flows must also place
+`<BOOTRAM_BIN>` on the runtime before `write_flash`.
 
 ```sh
-# Run from the UVHS build machine when its storage is not shared with runtime.
-export PRJ_NAME=fpga_uvhs_<cpu>-<tag>
-rsync -a env-scripts/fpga_diff/$PRJ_NAME/hw.dat/ \
-  "$FPGA_RUNTIME:$REMOTE_ROOT/env-scripts/fpga_diff/$PRJ_NAME/hw.dat/"
-rsync -a "$BOOTRAM_BIN" "$FPGA_RUNTIME:$REMOTE_ROOT/ready-to-run/bootram.bin"
+# The printed source is the clean runtime/ directory inside the bit archive.
+export BUILD_FPGA_RUNTIME_HOME=<printed-FPGA_RUNTIME_HOME>
+rsync -a "$BUILD_FPGA_RUNTIME_HOME/" \
+  "$FPGA_RUNTIME:$FPGA_RUNTIME_DIR/runtime-artifacts/fpga_uvhs_<cpu>-<tag>/"
+FPGA_RUNTIME_HOME=$FPGA_RUNTIME_DIR/runtime-artifacts/fpga_uvhs_<cpu>-<tag>
+rsync -a "$BOOTRAM_BIN" "$FPGA_RUNTIME:$FPGA_RUNTIME_DIR/ready-to-run/bootram.bin"
 ```
 
 ## Step 8: Write Bitstream and Run
@@ -255,10 +265,13 @@ rsync -a "$BOOTRAM_BIN" "$FPGA_RUNTIME:$REMOTE_ROOT/ready-to-run/bootram.bin"
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REMOTE_DIR` | repository root | Repository path on the remote target |
 | `FPGA_BACKEND` | `vivado` | Use the same backend selected for `make bit` |
-| `FPGA_HOST` | none | Required XDMA and `fpga-host` machine |
-| `FPGA_RUNTIME` | `$FPGA_HOST` | Bitstream, reset, memory, and ILA machine |
+| `FPGA_HOST` | local | XDMA and `fpga-host` machine; empty means local |
+| `FPGA_RUNTIME` | `$FPGA_HOST` | Bitstream, reset, memory, and ILA machine; empty means local |
+| `FPGA_HOST_DIR` | current checkout | Absolute Minjie checkout path on `FPGA_HOST` |
+| `FPGA_RUNTIME_DIR` | `$FPGA_HOST_DIR` | Absolute Minjie checkout path on `FPGA_RUNTIME` |
+| `FPGA_RUN_ENV` | `source ~/.bash_profile &&` | Environment setup for host/runtime commands |
+| `FPGA_RUNTIME_HOME` | empty | Absolute runtime-side UVHS project or Vivado bit path override |
 | `UVHS_ILA_GATED_CLOCK` | `inter_soc_clk` for KMH/XiangShan | Comma-separated gated capture clocks |
 | `FPGA_KEEP_RUNTIME` | `0` | Set to `1` to retain UVHS for consecutive `run_host` invocations |
 | `FPGA_BIT_HOME` | none | Bitstream bundle directory |
@@ -270,24 +283,27 @@ rsync -a "$BOOTRAM_BIN" "$FPGA_RUNTIME:$REMOTE_ROOT/ready-to-run/bootram.bin"
 | `SEED` | `1234` | Random DDR initialization seed when `RANDOM_MEM=1` |
 | `RUN_HOST_ARGS` | derived from `DIFF`, `WORKLOAD`, `RAM_SIZE`, `RANDOM_MEM`, `SEED` | Full argument list passed to `fpga-host` |
 
+For an FPGA machine without the build machine's NFS mount, set its checkout
+directory explicitly with `FPGA_HOST_DIR` or `FPGA_RUNTIME_DIR`.
+
 ### Vivado Example
 
 ```sh
-export BIT_ROOT=$REMOTE_ROOT/bitstream/$BIT_TAG
+export BIT_ROOT=$FPGA_HOST_DIR/bitstream/$BIT_TAG
 
 make write_bitstream \
   FPGA_BACKEND=vivado \
   FPGA_HOST=$FPGA_HOST \
-  REMOTE_DIR=$REMOTE_ROOT \
+  FPGA_HOST_DIR=$FPGA_HOST_DIR \
   FPGA_BIT_HOME=$BIT_ROOT
 
 make run_host \
   FPGA_BACKEND=vivado \
   FPGA_HOST=$FPGA_HOST \
-  REMOTE_DIR=$REMOTE_ROOT \
+  FPGA_HOST_DIR=$FPGA_HOST_DIR \
   FPGA_BIT_HOME=$BIT_ROOT \
-  WORKLOAD=$REMOTE_ROOT/ready-to-run/$WORKLOAD_TAG \
-  DIFF=$REMOTE_ROOT/ready-to-run/$NEMU_CONFIG/riscv64-nemu-interpreter-so
+  WORKLOAD=$FPGA_HOST_DIR/ready-to-run/$WORKLOAD_TAG \
+  DIFF=$FPGA_HOST_DIR/ready-to-run/$NEMU_CONFIG/riscv64-nemu-interpreter-so
 ```
 
 An external-LLC Vivado image also requires its boot ROM in the writable boot
@@ -297,14 +313,14 @@ flash. After every `write_bitstream`, write `<BOOTRAM_BIN>` before `run_host`:
 make write_flash \
   FPGA_BACKEND=vivado \
   FPGA_HOST=$FPGA_HOST \
-  REMOTE_DIR=$REMOTE_ROOT \
+  FPGA_HOST_DIR=$FPGA_HOST_DIR \
   FPGA_BIT_HOME=$BIT_ROOT \
   WORKLOAD=<BOOTRAM_BIN>
 ```
 
 `run_host` auto-finds `fpga-host` under `FPGA_BIT_HOME` and picks the `.bin` and `.txt` inside `WORKLOAD`.
 
-`FPGA_HOST` is required for run-side operations. `FPGA_RUNTIME` defaults to
+An empty `FPGA_HOST` means the current machine. `FPGA_RUNTIME` defaults to
 `FPGA_HOST`, which is the normal Vivado topology. Set them separately for UVHS.
 `FPGA_BACKEND` also selects the implementation of `write_bitstream`,
 `write_ddr`, `write_flash`, and `reset_cpu`. The default `vivado`
@@ -332,7 +348,9 @@ make write_bitstream \
   FPGA_BACKEND=uvhs \
   FPGA_HOST=$FPGA_HOST \
   FPGA_RUNTIME=$FPGA_RUNTIME \
-  REMOTE_DIR=$REMOTE_ROOT \
+  FPGA_HOST_DIR=$FPGA_HOST_DIR \
+  FPGA_RUNTIME_DIR=$FPGA_RUNTIME_DIR \
+  FPGA_RUNTIME_HOME=$FPGA_RUNTIME_HOME \
   CPU=<CPU> SUFFIX=<tag>
 ```
 
@@ -348,9 +366,10 @@ make write_flash \
   FPGA_BACKEND=uvhs \
   FPGA_HOST=$FPGA_HOST \
   FPGA_RUNTIME=$FPGA_RUNTIME \
-  REMOTE_DIR=$REMOTE_ROOT \
+  FPGA_RUNTIME_DIR=$FPGA_RUNTIME_DIR \
+  FPGA_RUNTIME_HOME=$FPGA_RUNTIME_HOME \
   CPU=<CPU> SUFFIX=<tag> \
-  WORKLOAD=<BOOTRAM_BIN>
+  WORKLOAD=$FPGA_RUNTIME_DIR/ready-to-run/bootram.bin
 ```
 
 The UVHS flash command performs a complete readback internally. A separate
@@ -361,9 +380,9 @@ the FPGA host. The target maps the remote UART to `/tmp/fpga-remote-uart`,
 exports `FPGA_UART_PORT`, and opens the shell used to run `fpga-host`:
 
 ```sh
-ssh "$FPGA_HOST"
-cd $REMOTE_ROOT/env-scripts/fpga_diff
 make bind_uart \
+  FPGA_HOST=$FPGA_HOST \
+  FPGA_HOST_DIR=$FPGA_HOST_DIR \
   FPGA_RUNTIME=<user@fpga-runtime> \
   REMOTE_UART_PORT=/dev/serial/by-id/<uart-device>
 ```
@@ -377,8 +396,10 @@ The normal host invocation points ILA commands back to the runtime host:
 make run_host \
   FPGA_BACKEND=uvhs \
   FPGA_HOST=$FPGA_HOST \
-  REMOTE_DIR=$REMOTE_ROOT \
   FPGA_RUNTIME=$FPGA_RUNTIME \
+  FPGA_HOST_DIR=$FPGA_HOST_DIR \
+  FPGA_RUNTIME_DIR=$FPGA_RUNTIME_DIR \
+  FPGA_RUNTIME_HOME=$FPGA_RUNTIME_HOME \
   FPGA_BIT_HOME=<HOST_RELEASE_DIR> \
   WORKLOAD=<WORKLOAD_DIR> \
   DIFF=<NEMU_SO> \
@@ -400,10 +421,12 @@ Check or stop a retained session from its env-scripts checkout:
 
 ```sh
 make -C env-scripts/fpga_diff runtime_status \
-  FPGA_BACKEND=uvhs CPU=<CPU> SUFFIX=<tag>
+  FPGA_BACKEND=uvhs CPU=<CPU> SUFFIX=<tag> \
+  FPGA_RUNTIME_HOME=$FPGA_RUNTIME_HOME
 
 make -C env-scripts/fpga_diff runtime_stop \
-  FPGA_BACKEND=uvhs CPU=<CPU> SUFFIX=<tag>
+  FPGA_BACKEND=uvhs CPU=<CPU> SUFFIX=<tag> \
+  FPGA_RUNTIME_HOME=$FPGA_RUNTIME_HOME
 ```
 
 When `FPGA_BACKEND=uvhs`, `run_host` automatically sets `FPGA_ILA_ARM_CMD` and
@@ -415,9 +438,9 @@ from `$FPGA_HOST` because host-side ILA and cleanup commands use it. Configure a
 usable key on `$FPGA_HOST` or connect to it with agent forwarding.
 
 The UVHS upload creates `UvData.usdb` and `UvData.vcd` under
-`env-scripts/fpga_diff/<PRJ_NAME>/runtime-work/UHD/uvhs_ila/` on the UVHS
-runtime host. The current hook prints those remote paths but does not copy the
-files back to the FPGA host or the machine that invoked `make run_host`.
+`$FPGA_RUNTIME_HOME/runtime-work/UHD/uvhs_ila/` on the runtime host. The current
+hook prints those remote paths but does not copy the files back to the FPGA host
+or the machine that invoked `make run_host`.
 
 With `USE_XDMA_H2C=1` (the default), the host writes only the workload `.bin`
 to DDR through XDMA H2C before enabling the CPU DDR path. H2C has priority in
@@ -431,9 +454,10 @@ make write_ddr \
   FPGA_BACKEND=uvhs \
   FPGA_HOST=$FPGA_HOST \
   FPGA_RUNTIME=$FPGA_RUNTIME \
-  REMOTE_DIR=$REMOTE_ROOT \
+  FPGA_RUNTIME_DIR=$FPGA_RUNTIME_DIR \
+  FPGA_RUNTIME_HOME=$FPGA_RUNTIME_HOME \
   FPGA_BIT_HOME=$BIT_ROOT \
-  WORKLOAD=$REMOTE_ROOT/ready-to-run/$WORKLOAD_TAG/$WORKLOAD_TAG.txt
+  WORKLOAD=$FPGA_RUNTIME_DIR/ready-to-run/$WORKLOAD_TAG/$WORKLOAD_TAG.txt
 ```
 
 ### DDR Fallback / Debug Path
@@ -453,9 +477,9 @@ make write_flash \
   FPGA_BACKEND=uvhs \
   FPGA_HOST=$FPGA_HOST \
   FPGA_RUNTIME=$FPGA_RUNTIME \
-  REMOTE_DIR=$REMOTE_ROOT \
-  FPGA_BIT_HOME=$BIT_ROOT \
-  WORKLOAD=<BOOTRAM_BIN>
+  FPGA_RUNTIME_DIR=$FPGA_RUNTIME_DIR \
+  FPGA_RUNTIME_HOME=$FPGA_RUNTIME_HOME \
+  WORKLOAD=$FPGA_RUNTIME_DIR/ready-to-run/bootram.bin
 ```
 
 ## Next Steps
