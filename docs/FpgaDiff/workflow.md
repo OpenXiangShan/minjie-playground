@@ -235,7 +235,7 @@ rsync -a --delete bitstream/$BIT_TAG/ "$FPGA_HOST:$REMOTE_ROOT/bitstream/$BIT_TA
 rsync -a --delete ready-to-run/ "$FPGA_HOST:$REMOTE_ROOT/ready-to-run/"
 ```
 
-When an UVHS build machine and `$FPGA_RUNTIME` do not share storage, sync the
+When a UVHS build machine and `$FPGA_RUNTIME` do not share storage, sync the
 selected `<PRJ_NAME>/hw.dat` directory to the matching env-scripts project path
 on `$FPGA_RUNTIME`. External-LLC flows must also place `<BOOTRAM_BIN>` on the
 runtime host before `write_flash`. Keep deployment separate from programming so
@@ -243,6 +243,7 @@ an incomplete copy cannot begin a board operation.
 
 ```sh
 # Run from the UVHS build machine when its storage is not shared with runtime.
+export PRJ_NAME=fpga_uvhs_<cpu>-<tag>
 rsync -a env-scripts/fpga_diff/$PRJ_NAME/hw.dat/ \
   "$FPGA_RUNTIME:$REMOTE_ROOT/env-scripts/fpga_diff/$PRJ_NAME/hw.dat/"
 rsync -a "$BOOTRAM_BIN" "$FPGA_RUNTIME:$REMOTE_ROOT/ready-to-run/bootram.bin"
