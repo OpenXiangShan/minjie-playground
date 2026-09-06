@@ -127,13 +127,13 @@ ls /dev/xdma0_*
 `fpga-host` uses `/dev/xdma0_h2c_0` for the default H2C workload load path and `/dev/xdma0_c2h_*` for DiffTest packets from FPGA to host.
 If `run_host` fails before printing `XDMA H2C queued`, verify that the H2C node exists and has write permission.
 
-For a DiffTest bitstream, the top-level Minjie flow invokes the local
-env-scripts `pcie_remove` target on `$FPGA_HOST` immediately before programming
-on `$FPGA_RUNTIME` and always attempts `pcie_rescan` afterward. The rescan waits
-for `xdma-chr`, then prints the endpoint, live PCI configuration value, and
-recreated device nodes. An all-`ff` configuration read is treated as a failed
-rescan even if stale nodes remain. Run the repository scripts as a normal user;
-only their internal sysfs `tee` operations require sudo.
+When `$FPGA_RUNTIME` and `$FPGA_HOST` differ, Minjie invokes the local
+env-scripts `pcie_remove` target on `$FPGA_HOST` before programming and
+`pcie_rescan` afterward. Same-host Vivado programming keeps these operations in
+the backend target. Rescan waits for `xdma-chr`, then prints the endpoint, live
+PCI configuration value, and recreated device nodes. An all-`ff` configuration
+read is treated as failure even if stale nodes remain. Only the scripts'
+internal sysfs `tee` operations require sudo.
 
 ## 6. Troubleshooting
 

@@ -215,14 +215,15 @@ ready-to-run/$WORKLOAD_TAG/$WORKLOAD_TAG.txt
 
 AM and Linux workload details are described separately in [workload.md](./workload.md).
 
-## Step 7: Sync to FPGA Host
+## Step 7: Sync to FPGA Machines
 
 ### Optional Parameters
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `<FPGA_REMOTE>` | none | Remote FPGA host |
-| `<REMOTE_ROOT>` | `/path/to/minjie-playground` | Repository path on the FPGA host |
+| `FPGA_HOST` | none | Host receiving release and workload artifacts |
+| `FPGA_RUNTIME` | `$FPGA_HOST` | Runtime receiving UVHS database and boot image when paths are not shared |
+| `<REMOTE_ROOT>` | `/path/to/minjie-playground` | Repository path on the FPGA machines |
 
 ### Example
 
@@ -232,6 +233,19 @@ export REMOTE_ROOT=/path/to/minjie-playground
 ssh "$FPGA_HOST" "mkdir -p $REMOTE_ROOT/bitstream $REMOTE_ROOT/ready-to-run"
 rsync -a --delete bitstream/$BIT_TAG/ "$FPGA_HOST:$REMOTE_ROOT/bitstream/$BIT_TAG/"
 rsync -a --delete ready-to-run/ "$FPGA_HOST:$REMOTE_ROOT/ready-to-run/"
+```
+
+When an UVHS build machine and `$FPGA_RUNTIME` do not share storage, sync the
+selected `<PRJ_NAME>/hw.dat` directory to the matching env-scripts project path
+on `$FPGA_RUNTIME`. External-LLC flows must also place `<BOOTRAM_BIN>` on the
+runtime host before `write_flash`. Keep deployment separate from programming so
+an incomplete copy cannot begin a board operation.
+
+```sh
+# Run from the UVHS build machine when its storage is not shared with runtime.
+rsync -a env-scripts/fpga_diff/$PRJ_NAME/hw.dat/ \
+  "$FPGA_RUNTIME:$REMOTE_ROOT/env-scripts/fpga_diff/$PRJ_NAME/hw.dat/"
+rsync -a "$BOOTRAM_BIN" "$FPGA_RUNTIME:$REMOTE_ROOT/ready-to-run/bootram.bin"
 ```
 
 ## Step 8: Write Bitstream and Run
@@ -244,7 +258,7 @@ rsync -a --delete ready-to-run/ "$FPGA_HOST:$REMOTE_ROOT/ready-to-run/"
 | `FPGA_BACKEND` | `vivado` | Use the same backend selected for `make bit` |
 | `FPGA_HOST` | none | Required XDMA and `fpga-host` machine |
 | `FPGA_RUNTIME` | `$FPGA_HOST` | Bitstream, reset, memory, and ILA machine |
-| `UVHS_ILA_GATED_CLOCK` | empty | Comma-separated gated capture clocks from `query -capture` |
+| `UVHS_ILA_GATED_CLOCK` | `inter_soc_clk` for KMH/XiangShan | Comma-separated gated capture clocks |
 | `FPGA_KEEP_RUNTIME` | `0` | Set to `1` to retain UVHS for consecutive `run_host` invocations |
 | `FPGA_BIT_HOME` | none | Bitstream bundle directory |
 | `WORKLOAD` | none | Workload directory containing `.bin` and `.txt` |
@@ -304,18 +318,13 @@ The UVHS flow uses two machines. `$FPGA_RUNTIME` owns the UVHS database, reset,
 flash, DDR backdoor, physical UART, and ILA. `$FPGA_HOST` owns the Linux PCIe
 endpoint, XDMA driver and device nodes, and `fpga-host`.
 
-For both backends, the public `write_bitstream` target first checks the runtime
-inputs without changing hardware. It then removes the `10ee:9048` endpoint on
-`$FPGA_HOST`, programs on `$FPGA_RUNTIME`, and always attempts to rescan
-`$FPGA_HOST`, including after a backend error or interrupt. The remove step
-refuses to continue while `fpga-host` is running. The rescan step prints the
-endpoint, live PCI configuration value, bound driver, device nodes, and
-permissions. Minjie owns this cross-machine ordering; each env-scripts target
-performs one local backend or XDMA operation.
-
-For UVHS, preflight also checks the global status of every FPGA selected by
-`UVHS_KEEP_FPGAS`. An occupied or booked FPGA causes the flow to stop before
-XDMA removal.
+When `$FPGA_RUNTIME` and `$FPGA_HOST` differ, Minjie removes the `10ee:9048`
+endpoint on `$FPGA_HOST`, invokes the original env-scripts `write_bitstream` on
+`$FPGA_RUNTIME`, then rescans `$FPGA_HOST`. An exit trap also attempts the
+rescan when programming fails. When both variables name the same machine, the
+backend keeps its original local behavior; Vivado performs its own remove and
+rescan. The remove step refuses to continue while `fpga-host` is running. The
+rescan prints the live PCI configuration value, driver, nodes, and permissions.
 
 ```sh
 make write_bitstream \
@@ -375,17 +384,16 @@ make run_host \
   CPU=<CPU> SUFFIX=<tag>
 ```
 
-If `query -capture` reports enabled stations on gated clocks, set
-`UVHS_ILA_GATED_CLOCK` to their exact names, separated by commas. Without
-these names, the runtime can arm the ILA trigger but will reject the condition
-because the gated station frequencies are not configured.
+KMH/XiangShan defaults `UVHS_ILA_GATED_CLOCK` to
+`fpga_top_debug.core_def.inter_soc_clk`; other profiles default to no gated
+capture clock. Override it with the exact comma-separated names from
+`query -capture` when a probe profile uses additional gated clocks.
 
-By default, `run_host` invokes env-scripts `runtime_cleanup` on
-`$FPGA_RUNTIME` after the host exits. The local UVHS cleanup clears ILA state
-and stops the persistent runtime. Set `FPGA_KEEP_RUNTIME=1` for consecutive
-runs; it still clears ILA but retains the runtime. Minjie owns the host-process
-lifecycle, cross-machine invocation, traps, and exit status, while env-scripts
-owns the backend-specific cleanup actions.
+By default, `run_host` uses the commands exported by `ila_host_env` to clear ILA
+and stop the persistent UVHS runtime after the host exits. The upload hook
+already clears ILA after a normal upload; the final clear covers interrupted or
+non-upload paths. Set `FPGA_KEEP_RUNTIME=1` for consecutive runs; ILA is still
+cleared but the runtime is retained.
 
 Check or stop a retained session from its env-scripts checkout:
 
