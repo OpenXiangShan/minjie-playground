@@ -134,7 +134,6 @@ packet length/corrupted C2H data.
 2. **If you are using the host path, verify the H2C load step succeeded**:
    Check the `run_host` log for `XDMA H2C queued` and `H2C load done`.
    Also verify that `/dev/xdma0_h2c_0` exists and that the host was built with `USE_XDMA_H2C=1`.
-   If the host was intentionally built with `USE_XDMA_H2C=0`, check the log for the `external DDR load command` instead.
 
 3. **Check the write operation's reset ownership**: H2C and `write_flash` do not
    require a separate `halt_soc` command. UVHS `write_ddr` and the manual Vivado
@@ -161,8 +160,8 @@ packet length/corrupted C2H data.
     UART/manual path: a second `reset_cpu` should be called after `halt_soc` and `write_ddr`:
 
     ```sh
-    make reset_cpu FPGA_RUNTIME=$FPGA_RUNTIME FPGA_RUNTIME_DIR=$FPGA_RUNTIME_DIR \
-      FPGA_RUNTIME_HOME=$FPGA_RUNTIME_HOME FPGA_BIT_HOME=$BIT_ROOT
+    make reset_cpu FPGA_RUNTIME=$FPGA_RUNTIME REMOTE_DIR=$REMOTE_DIR \
+      FPGA_BIT_HOME=$BIT_ROOT
     ```
 
 7. **Try a simpler workload**: If a Linux workload hangs, try an AM bare-metal test to isolate the issue:
