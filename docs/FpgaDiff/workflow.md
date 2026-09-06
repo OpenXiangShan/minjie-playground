@@ -275,7 +275,8 @@ rsync -a "$BOOTRAM_BIN" "$FPGA_RUNTIME:$REMOTE_DIR/ready-to-run/bootram.bin"
 | `RAM_SIZE` | `16GB` for XiangShan; `2GB` for NutShell | Forwarded as `--ram-size=$(RAM_SIZE)` |
 | `RANDOM_MEM` | `1` | Set to `1` to pass `--random-mem --seed=$(SEED)` |
 | `SEED` | `1234` | Random DDR initialization seed when `RANDOM_MEM=1` |
-| `RUN_HOST_ARGS` | derived from `DIFF`, `WORKLOAD`, `RAM_SIZE`, `RANDOM_MEM`, `SEED` | Full argument list passed to `fpga-host` |
+| `AXI_DELAY` | `0` | Delay CPU AXI traffic in CPU clock cycles; forwarded as `--cpu-axi-delay=$(AXI_DELAY)` |
+| `RUN_HOST_ARGS` | empty | Extra arguments passed to `fpga-host` in addition to the derived run arguments |
 
 For FPGA machines without the build machine's NFS mount, set their common
 checkout path with `REMOTE_DIR`.
