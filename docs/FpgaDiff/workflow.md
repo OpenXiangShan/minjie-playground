@@ -20,6 +20,9 @@ This document describes the end-to-end FPGA DiffTest flow. Each step lists optio
 - `<BOOTRAM_BIN>`: raw boot image to stage in the JTAG boot flash
 - `<FPGA_BACKEND>`: FPGA implementation/runtime backend, `vivado` or `uvhs`
 
+Replace every angle-bracket placeholder before running a command; the shell
+interprets literal `<` and `>` as redirection operators.
+
 ## Step 1: Generate Verilog
 
 ### Optional Parameters
