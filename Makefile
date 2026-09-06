@@ -309,13 +309,55 @@ bit:
 		find "$(BIT_OUT_DIR)" -maxdepth 1 -mindepth 1 | sort | tee -a $(BIT_LOG))
 write_bitstream:
 	$(call require_var,FPGA_HOST)
-	$(MAKE) -C "$(ROOT_DIR)/env-scripts/fpga_diff" write_bitstream \
-		FPGA_BACKEND=$(FPGA_BACKEND) FPGA_HOST="$(FPGA_HOST)" \
-		FPGA_RUNTIME="$(FPGA_RUNTIME)" \
-		FPGA_REMOTE_DIR="$(FPGA_RUN_DIFF_HOME)" \
-		FPGA_REMOTE_ENV="$(REMOTE_ENV)" FPGA_SSH="$(SSH)" \
-		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
-		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME))
+	@$(call fpga_remote,$(FPGA_RUNTIME),$(MAKE) --no-print-directory \
+		-C $(FPGA_RUN_DIFF_HOME) write_bitstream_preflight \
+		FPGA_BACKEND=$(FPGA_BACKEND) PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) \
+		SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
+		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
+	@set -u; \
+		refresh=1; \
+		[ "$(NO_DIFF)" = 1 ] && refresh=0; \
+		remove_started=0; \
+		rescan_done=0; \
+		rescan_status=0; \
+		rescan_xdma() { \
+			local result; \
+			rescan_done=1; \
+			$(call fpga_remote,$(FPGA_HOST),$(MAKE) --no-print-directory \
+				-C $(FPGA_RUN_DIFF_HOME) pcie_rescan); \
+			result=$$?; \
+			return $$result; \
+		}; \
+		cleanup_xdma() { \
+			status=$$?; \
+			trap - EXIT INT TERM HUP; \
+			if ((refresh && remove_started && !rescan_done)); then \
+				rescan_xdma || rescan_status=$$?; \
+			fi; \
+			if ((status != 0)); then exit $$status; fi; \
+			exit $$rescan_status; \
+		}; \
+		trap cleanup_xdma EXIT; \
+		trap 'exit 130' INT; \
+		trap 'exit 143' TERM; \
+		trap 'exit 129' HUP; \
+		if ((refresh)); then \
+			remove_started=1; \
+			$(call fpga_remote,$(FPGA_HOST),$(MAKE) --no-print-directory \
+				-C $(FPGA_RUN_DIFF_HOME) pcie_remove) || exit $$?; \
+		fi; \
+		runtime_status=0; \
+		$(call fpga_remote,$(FPGA_RUNTIME),$(MAKE) --no-print-directory \
+			-C $(FPGA_RUN_DIFF_HOME) write_bitstream \
+			FPGA_BACKEND=$(FPGA_BACKEND) PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) \
+			SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) FPGA_WRITE_PREFLIGHT_DONE=1 \
+			FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME))) || runtime_status=$$?; \
+		if ((refresh)); then \
+			rescan_xdma || rescan_status=$$?; \
+		fi; \
+		trap - EXIT INT TERM HUP; \
+		if ((runtime_status != 0)); then exit $$runtime_status; fi; \
+		exit $$rescan_status
 
 write_flash:
 	$(call require_var,FPGA_HOST)
@@ -426,13 +468,18 @@ run_host:
 		cleanup_runtime() { \
 			[ "$$cleanup_done" = 0 ] || return 0; \
 			cleanup_done=1; \
-			$(MAKE) --no-print-directory -C $(FPGA_RUN_DIFF_HOME) runtime_cleanup \
-				FPGA_BACKEND="$(FPGA_BACKEND)" FPGA_HOST="$(FPGA_HOST)" \
-				FPGA_RUNTIME="$(FPGA_RUNTIME)" FPGA_REMOTE_DIR="$(FPGA_RUN_DIFF_HOME)" \
-				FPGA_REMOTE_ENV="$(REMOTE_ENV)" FPGA_SSH=ssh \
-				FPGA_KEEP_RUNTIME="$(FPGA_KEEP_RUNTIME)" \
-				FPGA_BIT_HOME="$$fpga_bit_home" PRJ_NAME="$(PRJ_NAME)" \
-				CPU="$(CPU)" SUFFIX="$(SUFFIX)"; command_status=$$?; \
+			cleanup_command="$(MAKE) --no-print-directory \
+				-C $(FPGA_RUN_DIFF_HOME) runtime_cleanup \
+				FPGA_BACKEND=$(FPGA_BACKEND) \
+				FPGA_KEEP_RUNTIME=$(FPGA_KEEP_RUNTIME) \
+				FPGA_BIT_HOME=\"$$fpga_bit_home\" PRJ_NAME=\"$(PRJ_NAME)\" \
+				CPU=\"$(CPU)\" SUFFIX=\"$(SUFFIX)\""; \
+			if [ "$(FPGA_RUNTIME)" = "$(FPGA_HOST)" ]; then \
+				eval "$$cleanup_command"; command_status=$$?; \
+			else \
+				ssh "$(FPGA_RUNTIME)" "$(REMOTE_ENV) $$cleanup_command"; \
+				command_status=$$?; \
+			fi; \
 			if ((command_status != 0)); then \
 				echo "ERROR: failed to clean up FPGA runtime (status $$command_status)" >&2; \
 				cleanup_status=$$command_status; \

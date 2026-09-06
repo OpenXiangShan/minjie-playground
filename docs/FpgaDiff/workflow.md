@@ -309,7 +309,13 @@ inputs without changing hardware. It then removes the `10ee:9048` endpoint on
 `$FPGA_HOST`, programs on `$FPGA_RUNTIME`, and always attempts to rescan
 `$FPGA_HOST`, including after a backend error or interrupt. The remove step
 refuses to continue while `fpga-host` is running. The rescan step prints the
-endpoint, bound driver, device nodes, and permissions.
+endpoint, live PCI configuration value, bound driver, device nodes, and
+permissions. Minjie owns this cross-machine ordering; each env-scripts target
+performs one local backend or XDMA operation.
+
+For UVHS, preflight also checks the global status of every FPGA selected by
+`UVHS_KEEP_FPGAS`. An occupied or booked FPGA causes the flow to stop before
+XDMA removal.
 
 ```sh
 make write_bitstream \
@@ -374,11 +380,12 @@ If `query -capture` reports enabled stations on gated clocks, set
 these names, the runtime can arm the ILA trigger but will reject the condition
 because the gated station frequencies are not configured.
 
-By default, `run_host` asks env-scripts to clear ILA state and stop a persistent
-UVHS runtime after the host exits. Set `FPGA_KEEP_RUNTIME=1` for consecutive
-runs; env-scripts still clears ILA but retains the runtime. Minjie owns the
-host-process lifecycle and exit status, while env-scripts owns the
-backend-specific cleanup actions.
+By default, `run_host` invokes env-scripts `runtime_cleanup` on
+`$FPGA_RUNTIME` after the host exits. The local UVHS cleanup clears ILA state
+and stops the persistent runtime. Set `FPGA_KEEP_RUNTIME=1` for consecutive
+runs; it still clears ILA but retains the runtime. Minjie owns the host-process
+lifecycle, cross-machine invocation, traps, and exit status, while env-scripts
+owns the backend-specific cleanup actions.
 
 Check or stop a retained session from its env-scripts checkout:
 
@@ -393,11 +400,10 @@ make -C env-scripts/fpga_diff runtime_stop \
 When `FPGA_BACKEND=uvhs`, `run_host` automatically sets `FPGA_ILA_ARM_CMD` and
 `FPGA_ILA_UPLOAD_CMD`. The generated upload hook restores the sign-off clock
 and clears the trigger/capture state even when upload fails. Backend dispatch
-and command construction stay inside `env-scripts`; playground passes
-`FPGA_BACKEND`, `FPGA_RUNTIME`, and `FPGA_HOST`. For a split-host flow,
-`FPGA_RUNTIME` must also resolve from `$FPGA_HOST` because host-side ILA and
-cleanup commands use it. Configure a usable key on `$FPGA_HOST` or connect to
-it with agent forwarding.
+and ILA hook construction stay inside `env-scripts`; playground decides where
+to invoke those targets. For a split-host flow, `FPGA_RUNTIME` must also resolve
+from `$FPGA_HOST` because host-side ILA and cleanup commands use it. Configure a
+usable key on `$FPGA_HOST` or connect to it with agent forwarding.
 
 The UVHS upload creates `UvData.usdb` and `UvData.vcd` under
 `env-scripts/fpga_diff/<PRJ_NAME>/runtime-work/UHD/uvhs_ila/` on the UVHS

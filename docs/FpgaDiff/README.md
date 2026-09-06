@@ -18,9 +18,10 @@ XiangShan / NutShell Verilog
 
 `$FPGA_HOST` owns the Linux XDMA endpoint and `fpga-host`. `$FPGA_RUNTIME` owns
 bitstream programming, reset, memory, and ILA operations and defaults to
-`$FPGA_HOST`. Set them separately for a split-host backend such as UVHS. The
-env-scripts download flow removes and rescans XDMA around programming. See
-[workflow.md](./workflow.md) for the commands and UART bridge.
+`$FPGA_HOST`. Set them separately for a split-host backend such as UVHS. Minjie
+orchestrates programming across the machines using local backend and XDMA
+targets from env-scripts. See [workflow.md](./workflow.md) for the commands and
+UART bridge.
 
 ## Common Artifacts
 
