@@ -16,7 +16,7 @@ minjie-playground/
 ├── env-scripts/             # FPGA environment scripts & Vivado projects
 │   └── fpga_diff/           # Vivado project, TCL scripts, constraints
 ├── build/                   # Build outputs (gitignored)
-│   ├── build-log/           # Logs for each build stage
+│   ├── build-log/           # Logs grouped by build stage and FPGA backend
 │   ├── release/             # Release tarballs and unpacked directories
 │   └── run-log/             # fpga-host runtime logs
 ├── ready-to-run/            # NEMU SO and workload binaries (gitignored)
@@ -41,7 +41,7 @@ minjie-playground/
 | Path | Contents |
 |------|----------|
 | `build/release/` | Release tarballs, unpacked releases, `latest-<design>.path` and `latest-<design>.name` |
-| `build/build-log/` | Per-stage logs: `verilog-*`, `release-*`, `host-*`, `bit-*`, `nemu-*`, `workload-*` |
+| `build/build-log/<stage>/` | Logs grouped by stage; bit logs add a `<backend>` subdirectory |
 | `build/run-log/` | `run_host` runtime logs with timestamps |
 | `ready-to-run/<nemu-config>/` | NEMU reference SO (`riscv64-nemu-interpreter-so`) |
 | `ready-to-run/<design>-<target>/` | Workload `.bin` for H2C loading, plus Bin2ddr `.txt` for JTAG DDR loading |
