@@ -269,7 +269,7 @@ rsync -a "$BOOTRAM_BIN" "$FPGA_RUNTIME:$REMOTE_DIR/ready-to-run/bootram.bin"
 | `FPGA_RUNTIME` | `$FPGA_HOST` | Bitstream, reset, memory, and ILA machine; empty means local |
 | `REMOTE_DIR` | current checkout | Minjie checkout path on `FPGA_HOST` and `FPGA_RUNTIME` |
 | `REMOTE_ENV` | `source ~/.bash_profile &&` | Environment setup for every SSH command |
-| `UVHS_ILA_GATED_CLOCK` | `inter_soc_clk` | Comma-separated gated capture clocks |
+| `UVHS_ILA_GATED_CLOCK` | 0804 replicated gated-clock paths | Comma-separated gated capture clocks |
 | `FPGA_BIT_HOME` | none | Bitstream bundle directory |
 | `WORKLOAD` | none | Workload directory containing `.bin` and `.txt` |
 | `DIFF` | empty | NEMU SO path for diff mode |
@@ -386,7 +386,9 @@ manual readback is needed only when diagnosing a write or boot failure.
 `$FPGA_HOST`, connects it to the runtime's `/dev/ttyUSB0`, and exports it as
 `FPGA_UART_PORT`. The same environment also exports ILA arm/upload hooks and a
 DDR fallback hook. The host cleanup command removes the PTY and bridge when
-`fpga-host` exits. Set `BIND_UART=0` to skip the UART bridge.
+`fpga-host` exits. Bridge setup fails if another process is already reading the
+physical UART, because concurrent readers split its byte stream. Set
+`BIND_UART=0` to skip the UART bridge.
 
 The normal host invocation obtains this environment automatically:
 
@@ -402,10 +404,9 @@ make run_host \
   CPU=<CPU> SUFFIX=<tag>
 ```
 
-`UVHS_ILA_GATED_CLOCK` defaults to
-`fpga_top_debug.core_def.inter_soc_clk` for every CPU profile. Override it with
-the exact comma-separated names from `query -capture` when a probe profile uses
-additional gated clocks.
+`UVHS_ILA_GATED_CLOCK` defaults to the two replicated gated-clock paths in the
+0804 runtime database. Override it with the exact comma-separated names from
+`query -capture` for another bitstream or runtime database.
 
 The ILA upload hook clears capture state after every attempted upload, so
 runtime cleanup does not call `ila_clear`. Unless `FPGA_KEEP_RUNTIME=1`, Minjie

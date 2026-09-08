@@ -93,7 +93,7 @@ endef
 
 # $(call remote,<host>,<directory>,<command>[,<ssh-command>])
 define remote
-$(if $(strip $(1)),$(if $(strip $(4)),$(strip $(4)),$(SSH)) $(strip $(1)) \
+$(if $(strip $(1)),env LC_ALL=C $(if $(strip $(4)),$(strip $(4)),$(SSH)) $(strip $(1)) \
 	'$(REMOTE_ENV) cd "$(strip $(2))" && $(strip $(3))',$(strip $(3)))
 endef
 
@@ -398,17 +398,18 @@ run_host:
 	$(call remote,$(FPGA_HOST),$(REMOTE_DIR),\
 		fpga_bit_home=$(call abs_path,$(FPGA_BIT_HOME)); \
 		workload_home=$(call abs_path,$(WORKLOAD)); \
-		workload_bin=$$(echo "$$workload_home"/*.bin); \
-		workload_txt=$$(echo "$$workload_home"/*.txt); \
+		workload_bin=$$(find "$$workload_home" -maxdepth 1 -type f -name "*.bin" -print -quit); \
+		workload_txt=$$(find "$$workload_home" -maxdepth 1 -type f -name "*.txt" -print -quit); \
 		host=$(if $(strip $(HOST)),$(call abs_path,$(HOST)),); \
-		test -n "$$host" || host=$$(echo "$$fpga_bit_home"/*/build/fpga-host); \
+		test -n "$$host" || host=$$(find "$$fpga_bit_home" -type f -path "*/build/fpga-host" -print -quit); \
 		host_env=$$($(MAKE) -s -C env-scripts/fpga_diff host_env \
 			FPGA_BACKEND=$(FPGA_BACKEND) CPU=$(CPU) SUFFIX="$(SUFFIX)" \
 			NO_DIFF=$(NO_DIFF) BIND_UART=$(BIND_UART) REMOTE_ENV="$(REMOTE_ENV)" \
 			FPGA_RUNTIME="$(if $(filter $(FPGA_HOST),$(FPGA_RUNTIME)),,$(FPGA_RUNTIME))" \
+			$(if $(strip $(UVHS_ILA_GATED_CLOCK)),UVHS_ILA_GATED_CLOCK="$(UVHS_ILA_GATED_CLOCK)",) \
 			WORKLOAD="$$workload_txt") || exit $$?; \
 		eval "$$host_env"; \
-		trap 'eval "$${FPGA_HOST_CLEANUP_CMD:-:}"' EXIT; \
+		trap "$${FPGA_HOST_CLEANUP_CMD:-:}" 0; \
 		trap "exit 130" INT; trap "exit 143" TERM; \
 		"$$host" $(RUN_HOST_ARGS)) || host_status=$$?; \
 	if [ "$(FPGA_KEEP_RUNTIME)" != 1 ]; then \
