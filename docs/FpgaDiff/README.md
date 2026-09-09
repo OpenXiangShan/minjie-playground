@@ -11,17 +11,24 @@ XiangShan / NutShell Verilog
   -> NEMU generates reference SO
   -> workload-builder compiles workloads
   -> Bin2ddr generates DDR txt for the JTAG fallback/debug path
-  -> optional JTAG stages a raw boot image in BRAM-backed boot flash
-  -> FPGA: write bitstream, reset cpu
+  -> external-LLC flows write the boot image after every bitstream download
+  -> FPGA: write bitstream, restore XDMA, write boot flash when required
   -> fpga-host loads the workload through XDMA H2C by default, then starts DiffTest
 ```
+
+`$FPGA_HOST` owns the Linux XDMA endpoint and `fpga-host`. `$FPGA_RUNTIME` owns
+bitstream programming, reset, memory, and ILA operations and defaults to
+`$FPGA_HOST`. Set them separately for a split-host backend such as UVHS. Minjie
+orchestrates programming across the machines using local backend and XDMA
+targets from env-scripts. Before `fpga-host`, env-scripts supplies its ILA, DDR,
+and UART environment. See [workflow.md](./workflow.md) for the full commands.
 
 ## Common Artifacts
 
 | Path | Contents |
 |------|----------|
 | `build/release/` | Release tarballs, unpacked releases, `latest-<design>.path`, `latest-<design>.name` |
-| `build/build-log/` | Per-stage logs for `verilog`, `release`, `host`, `bit`, `nemu`, `workload` |
+| `build/build-log/<stage>/` | Logs grouped by stage; bit logs add a `<backend>` subdirectory |
 | `build/run-log/` | `run_host` runtime logs |
 | `ready-to-run/<nemu-config>/` | NEMU reference SO |
 | `ready-to-run/<design>-<target>/` | Workload `.bin` for H2C loading, plus Bin2ddr `.txt` for JTAG DDR loading |

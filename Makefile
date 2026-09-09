@@ -41,12 +41,12 @@ USE_XDMA_H2C ?= 1
 FPGA_HOST_ARGS ?= RELEASE=1 FPGA=1 DIFFTEST_PERFCNT=1
 RELEASE_DIR ?= $(BUILD_DIR)/release
 RELEASE_SUFFIX ?= $(TIME_STAMP)
-RELEASE_LOG ?= $(BUILD_LOG_DIR)/release-$(DESIGN)-$(LOG_STAMP).log
+RELEASE_LOG ?= $(BUILD_LOG_DIR)/release/release-$(DESIGN)-$(LOG_STAMP).log
 RELEASE_LATEST_PATH ?= $(RELEASE_DIR)/latest-$(DESIGN).path
 RELEASE_LATEST_NAME ?= $(RELEASE_DIR)/latest-$(DESIGN).name
-VERILOG_LOG ?= $(BUILD_LOG_DIR)/verilog-$(DESIGN)-$(LOG_STAMP).log
-HOST_LOG ?= $(BUILD_LOG_DIR)/host-$(DESIGN)-$(LOG_STAMP).log
-WORKLOAD_LOG ?= $(BUILD_LOG_DIR)/workload-$(WORKLOAD_TAG)-$(LOG_STAMP).log
+VERILOG_LOG ?= $(BUILD_LOG_DIR)/verilog/verilog-$(DESIGN)-$(LOG_STAMP).log
+HOST_LOG ?= $(BUILD_LOG_DIR)/host/host-$(DESIGN)-$(LOG_STAMP).log
+WORKLOAD_LOG ?= $(BUILD_LOG_DIR)/workload/workload-$(WORKLOAD_TAG)-$(LOG_STAMP).log
 
 NEMU_CONFIG ?= riscv64-xs-ref_defconfig
 NEMU_SO_NAME ?= riscv64-nemu-interpreter-so
@@ -54,17 +54,18 @@ READY_TO_RUN_DIR ?= $(ROOT_DIR)/ready-to-run
 NEMU_OUT_DIR ?= $(READY_TO_RUN_DIR)/$(NEMU_CONFIG)
 NEMU_OUT_SO ?= $(NEMU_OUT_DIR)/$(NEMU_SO_NAME)
 NEMU_SRC_SO ?= $(NEMU_HOME)/build/$(NEMU_SO_NAME)
-NEMU_LOG ?= $(BUILD_LOG_DIR)/nemu-$(NEMU_CONFIG)-$(LOG_STAMP).log
+NEMU_LOG ?= $(BUILD_LOG_DIR)/nemu/nemu-$(NEMU_CONFIG)-$(LOG_STAMP).log
 
-# Only Vivado/FPGA run-side commands use REMOTE. Other build targets run locally.
-REMOTE ?=
+# FPGA_BUILD_REMOTE supports an optional NFS-sharing build host. FPGA_HOST and
+# FPGA_RUNTIME support non-NFS run hosts through REMOTE_DIR.
+FPGA_BUILD_REMOTE ?=
 REMOTE_DIR ?= $(ROOT_DIR)
 REMOTE_ENV ?= source ~/.bash_profile &&
 SSH ?= ssh
+FPGA_HOST ?=
+FPGA_RUNTIME ?= $(FPGA_HOST)
 
-FPGA_ROOT := $(if $(strip $(REMOTE)),$(REMOTE_DIR),$(ROOT_DIR))
-FPGA_DIFF_HOME := $(FPGA_ROOT)/env-scripts/fpga_diff
-FPGA_BUILD_LOG_DIR ?= $(FPGA_ROOT)/build/build-log
+FPGA_DIFF_HOME := $(ROOT_DIR)/env-scripts/fpga_diff
 
 CPU ?= $(if $(filter $(DESIGN),nutshell),nutshell,kmh)
 SUFFIX ?=
@@ -74,15 +75,15 @@ override SUFFIX := nodiff$(if $(strip $(SUFFIX)),-$(strip $(SUFFIX)),)
 endif
 endif
 FPGA_BACKEND ?= vivado
-PRJ_NAME ?= fpga_$(FPGA_BACKEND)_$(CPU)$(if $(strip $(SUFFIX)),-$(strip $(SUFFIX)),)
-export PRJ_NAME
+FPGA_KEEP_RUNTIME ?= 0
+BIND_UART ?= 1
 BIT_SRC_DIR ?= $(shell cat "$(RELEASE_LATEST_PATH)" 2>/dev/null)
 CORE_DIR ?= $(BIT_SRC_DIR)/build
 RTL_INCLUDE ?=
-BIT_ROOT ?= $(FPGA_ROOT)/bitstream
+BIT_ROOT ?= $(ROOT_DIR)/bitstream
 BIT_TAG ?= $(DESIGN)-$(LOG_STAMP)
 BIT_OUT_DIR ?= $(BIT_ROOT)/$(BIT_TAG)
-BIT_LOG ?= $(FPGA_BUILD_LOG_DIR)/bit-$(CPU)-$(LOG_STAMP).log
+BIT_LOG ?= $(BUILD_LOG_DIR)/bit/$(FPGA_BACKEND)/bit-$(FPGA_BACKEND)-$(CPU)-$(LOG_STAMP).log
 FPGA_BIT_HOME ?=
 WORKLOAD ?=
 
@@ -90,8 +91,10 @@ define abs_path
 $(if $(strip $(1)),$$(realpath -m "$(1)"))
 endef
 
+# $(call remote,<host>,<directory>,<command>[,<ssh-command>])
 define remote
-$(if $(strip $(REMOTE)),$(SSH) $(REMOTE) 'cd $(REMOTE_DIR) && $(REMOTE_ENV) $(1)',$(1))
+$(if $(strip $(1)),env LC_ALL=C $(if $(strip $(4)),$(strip $(4)),$(SSH)) $(strip $(1)) \
+	'$(REMOTE_ENV) cd "$(strip $(2))" && $(strip $(3))',$(strip $(3)))
 endef
 
 define require_var
@@ -153,7 +156,7 @@ SEED ?= 1234
 AXI_DELAY ?= 0
 RUN_LOG ?= $(BUILD_DIR)/run-log/run-$$(date +%Y%m%d-%H%M%S).log
 
-.PHONY: help init link_difftest clean verilog release host check_project_name project bit \
+.PHONY: help init link_difftest clean verilog release host project bit \
 	write_bitstream write_flash write_ddr reset_cpu workload nemu run_host ila_clear \
 	xiangshan nutshell xs nut
 
@@ -180,8 +183,10 @@ help:
 	@printf '%s\n' 'Vector DiffTest is enabled by default; set DIFFTEST_EXCLUDE=Vec for a no-vector build.'
 	@printf '%s\n' 'Set DIFF=/path/to/nemu-so for diff mode; leave DIFF empty for --no-diff.'
 	@printf '%s\n' 'Set FPGA_BACKEND=uvhs to use the UVHS compile, runtime, memory, reset, and ILA paths.'
+	@printf '%s\n' 'Set FPGA_HOST and optionally FPGA_RUNTIME.'
+	@printf '%s\n' 'Use FPGA_KEEP_RUNTIME=1 for consecutive runs.'
 	@printf '%s\n' ''
-	@printf '%s\n' 'Remote backend/runtime: add REMOTE=user@host REMOTE_DIR=/path/to/FpgaDiff-playground.'
+	@printf '%s\n' 'Set FPGA_BUILD_REMOTE for an NFS build host; set REMOTE_DIR for FPGA hosts.'
 
 # Keep XS/Nut difftest as symlinks to the top-level difftest; otherwise
 # their submodule init checks out the shared difftest to their gitlink commits.
@@ -207,7 +212,7 @@ clean:
 verilog:
 	$(call require_design)
 	$(MAKE) link_difftest
-	mkdir -p $(BUILD_LOG_DIR)
+	mkdir -p $(dir $(VERILOG_LOG))
 ifeq ($(DESIGN),nutshell)
 	set -o pipefail; \
 	NOOP_HOME=$(NUT_HOME) \
@@ -223,7 +228,7 @@ endif
 release:
 	$(call require_design)
 	$(MAKE) link_difftest
-	mkdir -p $(RELEASE_DIR) $(BUILD_LOG_DIR)
+	mkdir -p "$(RELEASE_DIR)" $(dir $(RELEASE_LOG))
 	set -o pipefail; \
 	NOOP_HOME=$(DESIGN_HOME) \
 	$(MAKE) -C $(DESIGN_HOME)/difftest \
@@ -244,31 +249,26 @@ host:
 	$(call require_design)
 	$(call require_var,FPGA_HOST_HOME)
 	$(MAKE) link_difftest
-	mkdir -p $(BUILD_LOG_DIR)
+	mkdir -p $(dir $(HOST_LOG))
 	set -o pipefail; \
 	NOOP_HOME=$(FPGA_HOST_HOME) \
-	$(MAKE) -C $(FPGA_HOST_HOME)/difftest fpga-host $(FPGA_HOST_ARGS) \
-		USE_XDMA_H2C=$(USE_XDMA_H2C) \
-		2>&1 | tee $(HOST_LOG)
-
-check_project_name:
-	@case "$$PRJ_NAME" in \
-		"") echo "ERROR: PRJ_NAME is empty" >&2; exit 2 ;; \
-		.|..|*[!A-Za-z0-9_.-]*) \
-			echo "ERROR: invalid PRJ_NAME: $$PRJ_NAME" >&2; \
-			echo "Use only letters, digits, '.', '_', and '-'." >&2; exit 2 ;; \
-	esac
-
-project bit write_bitstream write_flash write_ddr reset_cpu ila_clear run_host: check_project_name
+		$(MAKE) -C $(FPGA_HOST_HOME)/difftest fpga-host $(FPGA_HOST_ARGS) \
+			USE_XDMA_H2C=$(USE_XDMA_H2C) \
+			2>&1 | tee $(HOST_LOG)
+	@test -x "$(FPGA_HOST_HOME)/build/fpga-host"
+	@echo "FPGA_HOST_HOME=$(abspath $(FPGA_HOST_HOME))"
+	@echo "FPGA_HOST_BINARY=$(abspath $(FPGA_HOST_HOME))/build/fpga-host"
 
 project:
-	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) project FPGA_BACKEND=$(FPGA_BACKEND) \
-		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" CORE_DIR=$(CORE_DIR) \
-		RTL_INCLUDE="$(RTL_INCLUDE)" NO_DIFF=$(NO_DIFF))
+	$(call remote,$(FPGA_BUILD_REMOTE),$(ROOT_DIR),\
+		$(MAKE) -C $(FPGA_DIFF_HOME) project \
+		FPGA_BACKEND=$(FPGA_BACKEND) CPU=$(CPU) SUFFIX="$(SUFFIX)" \
+		CORE_DIR=$(CORE_DIR) RTL_INCLUDE="$(RTL_INCLUDE)" NO_DIFF=$(NO_DIFF))
 
 bit:
 	$(call require_design)
-	$(call remote,set -e; \
+	$(call remote,$(FPGA_BUILD_REMOTE),$(ROOT_DIR),\
+		set -e; \
 		release_src="$(BIT_SRC_DIR)"; \
 		test -n "$$release_src" || { \
 			echo "ERROR: missing latest release path: $(RELEASE_LATEST_PATH)"; \
@@ -284,52 +284,69 @@ bit:
 			exit 1; \
 		}; \
 		rm -rf "$(BIT_OUT_DIR)"; \
-		mkdir -p "$(FPGA_BUILD_LOG_DIR)" "$(BIT_OUT_DIR)")
-	$(call remote,set -o pipefail; \
+		mkdir -p $(dir $(BIT_LOG)) "$(BIT_OUT_DIR)")
+	$(call remote,$(FPGA_BUILD_REMOTE),$(ROOT_DIR),\
+		set -o pipefail; \
 		$(MAKE) -C $(FPGA_DIFF_HOME) bitstream FPGA_BACKEND=$(FPGA_BACKEND) \
-			PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" CORE_DIR=$(CORE_DIR) \
+			CPU=$(CPU) SUFFIX="$(SUFFIX)" CORE_DIR=$(CORE_DIR) \
 			RTL_INCLUDE="$(RTL_INCLUDE)" NO_DIFF=$(NO_DIFF) \
 			2>&1 | tee $(BIT_LOG))
-	$(call remote,set -o pipefail; \
+	$(call remote,$(FPGA_BUILD_REMOTE),$(ROOT_DIR),\
+		set -o pipefail; \
 		release_src="$(BIT_SRC_DIR)"; \
 		$(MAKE) -C $(FPGA_DIFF_HOME) stage_bitstream FPGA_BACKEND=$(FPGA_BACKEND) \
-			PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" \
-			NO_DIFF=$(NO_DIFF) FPGA_BIT_ARTIFACT_DIR=$(BIT_OUT_DIR) && \
+			CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
+			FPGA_BIT_ARTIFACT_DIR=$(BIT_OUT_DIR) && \
 		cp -a "$$release_src" "$(BIT_OUT_DIR)/" && \
-		find "$(BIT_OUT_DIR)" -maxdepth 1 -mindepth 1 | sort | tee -a $(BIT_LOG))
+		find "$(BIT_OUT_DIR)" -maxdepth 1 -mindepth 1 | sort | tee -a $(BIT_LOG) && \
+		echo "FPGA_BIT_HOME=$(BIT_OUT_DIR)")
+
 write_bitstream:
-	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) write_bitstream FPGA_BACKEND=$(FPGA_BACKEND) \
-		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
-		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
+ifneq ($(strip $(FPGA_RUNTIME)),$(strip $(FPGA_HOST)))
+	$(call remote,$(FPGA_HOST),$(REMOTE_DIR),\
+		$(MAKE) -C env-scripts/fpga_diff pcie_remove)
+endif
+	$(call remote,$(FPGA_RUNTIME),$(REMOTE_DIR),\
+		$(MAKE) -C env-scripts/fpga_diff write_bitstream \
+		FPGA_BACKEND=$(FPGA_BACKEND) CPU=$(CPU) SUFFIX="$(SUFFIX)" \
+		NO_DIFF=$(NO_DIFF) FPGA_BIT_HOME="$(call abs_path,$(FPGA_BIT_HOME))")
+ifneq ($(strip $(FPGA_RUNTIME)),$(strip $(FPGA_HOST)))
+	$(call remote,$(FPGA_HOST),$(REMOTE_DIR),\
+		$(MAKE) -C env-scripts/fpga_diff pcie_rescan)
+endif
 
 write_flash:
 	$(call require_var,WORKLOAD)
-	$(call remote,bootrom=$(call abs_path,$(WORKLOAD)); \
-		$(MAKE) -C $(FPGA_DIFF_HOME) write_flash FPGA_BACKEND=$(FPGA_BACKEND) \
-		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
-		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)) WORKLOAD="$$bootrom")
+	$(call remote,$(FPGA_RUNTIME),$(REMOTE_DIR),\
+		bootrom=$(call abs_path,$(WORKLOAD)); \
+		$(MAKE) -C env-scripts/fpga_diff write_flash FPGA_BACKEND=$(FPGA_BACKEND) \
+		CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
+		FPGA_BIT_HOME="$(call abs_path,$(FPGA_BIT_HOME))" WORKLOAD="$$bootrom")
 
 write_ddr:
 	$(call require_var,WORKLOAD)
-	$(call remote,workload=$(call abs_path,$(WORKLOAD)); \
+	$(call remote,$(FPGA_RUNTIME),$(REMOTE_DIR),\
+		workload=$(call abs_path,$(WORKLOAD)); \
 		test -d "$$workload" && workload=$$(echo "$$workload"/*.txt) || true; \
-		$(MAKE) -C $(FPGA_DIFF_HOME) write_ddr FPGA_BACKEND=$(FPGA_BACKEND) \
-		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
-		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)) WORKLOAD="$$workload")
+		$(MAKE) -C env-scripts/fpga_diff write_ddr FPGA_BACKEND=$(FPGA_BACKEND) \
+		CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
+		FPGA_BIT_HOME="$(call abs_path,$(FPGA_BIT_HOME))" WORKLOAD="$$workload")
 
 reset_cpu:
-	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) reset_cpu FPGA_BACKEND=$(FPGA_BACKEND) \
-		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
-		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
+	$(call remote,$(FPGA_RUNTIME),$(REMOTE_DIR),\
+		$(MAKE) -C env-scripts/fpga_diff reset_cpu \
+		FPGA_BACKEND=$(FPGA_BACKEND) CPU=$(CPU) SUFFIX="$(SUFFIX)" \
+		NO_DIFF=$(NO_DIFF) FPGA_BIT_HOME="$(call abs_path,$(FPGA_BIT_HOME))")
 
 ila_clear:
-	$(call remote,$(MAKE) -C $(FPGA_DIFF_HOME) $@ FPGA_BACKEND=$(FPGA_BACKEND) \
-		PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) SUFFIX="$(SUFFIX)" NO_DIFF=$(NO_DIFF) \
-		FPGA_BIT_HOME=$(call abs_path,$(FPGA_BIT_HOME)))
+	$(call remote,$(FPGA_RUNTIME),$(REMOTE_DIR),\
+		$(MAKE) -C env-scripts/fpga_diff $@ \
+		FPGA_BACKEND=$(FPGA_BACKEND) CPU=$(CPU) SUFFIX="$(SUFFIX)" \
+		NO_DIFF=$(NO_DIFF) FPGA_BIT_HOME="$(call abs_path,$(FPGA_BIT_HOME))")
 
 workload:
 	$(call require_design)
-	mkdir -p $(WORKLOAD_OUT_DIR) $(BUILD_LOG_DIR)
+	mkdir -p "$(WORKLOAD_OUT_DIR)" $(dir $(WORKLOAD_LOG))
 	set -o pipefail; \
 	if [ "$(WORKLOAD_TYPE)" = "am" ]; then \
 		$(MAKE) -C $(WORKLOAD_HOME) $(TARGET) ARCH=$(AM_ARCH) CPPFLAGS="$(AM_CPPFLAGS)" -j$(JOBS) 2>&1 | tee $(WORKLOAD_LOG); \
@@ -356,7 +373,7 @@ workload:
 		$(BIN2DDR_ARGS) 2>&1 | tee -a $(WORKLOAD_LOG)
 
 nemu:
-	mkdir -p $(NEMU_OUT_DIR) $(BUILD_LOG_DIR)
+	mkdir -p "$(NEMU_OUT_DIR)" $(dir $(NEMU_LOG))
 	set -o pipefail; $(MAKE) -C $(NEMU_HOME) NEMU_HOME=$(NEMU_HOME) $(NEMU_CONFIG) 2>&1 | tee $(NEMU_LOG)
 	set -o pipefail; $(MAKE) -C $(NEMU_HOME) NEMU_HOME=$(NEMU_HOME) -j$(JOBS) 2>&1 | tee -a $(NEMU_LOG)
 	test -f "$(NEMU_SRC_SO)" || { echo "ERROR: NEMU ref so not found: $(NEMU_SRC_SO)"; exit 1; }
@@ -370,33 +387,39 @@ override RUN_HOST_ARGS += $(if $(strip $(RAM_SIZE)),--ram-size=$(RAM_SIZE),)
 override RUN_HOST_ARGS += $(if $(filter 1,$(RANDOM_MEM)),--random-mem --seed=$(SEED),)
 override RUN_HOST_ARGS += --cpu-axi-delay=$(AXI_DELAY)
 
+# host_env creates the run-scoped UART bridge by default. Its cleanup command
+# releases the bridge when the fpga-host shell exits.
 run_host:
 	$(call require_var,FPGA_BIT_HOME)
 	$(call require_var,WORKLOAD)
 	@run_log="$(RUN_LOG)"; mkdir -p "$$(dirname "$$run_log")"; \
 	exec > >(setsid tee "$$run_log") 2>&1; \
-	$(call remote,\
+	host_status=0; runtime_status=0; \
+	$(call remote,$(FPGA_HOST),$(REMOTE_DIR),\
 		fpga_bit_home=$(call abs_path,$(FPGA_BIT_HOME)); \
 		workload_home=$(call abs_path,$(WORKLOAD)); \
-		workload_bin=$$(echo "$$workload_home"/*.bin); \
-		workload_txt=$$(echo "$$workload_home"/*.txt); \
+		workload_bin=$$(find "$$workload_home" -maxdepth 1 -type f -name "*.bin" -print -quit); \
+		workload_txt=$$(find "$$workload_home" -maxdepth 1 -type f -name "*.txt" -print -quit); \
 		host=$(if $(strip $(HOST)),$(call abs_path,$(HOST)),); \
-		test -n "$$host" || host=$$(echo "$$fpga_bit_home"/*/build/fpga-host); \
-		printf -v ddr_load_cmd "%q %q %q" bash -lc "\
-			$(REMOTE_ENV) \
-				$(MAKE) -C $(FPGA_DIFF_HOME) write_ddr FPGA_BACKEND=$(FPGA_BACKEND) \
-			PRJ_NAME=$(PRJ_NAME) CPU=$(CPU) SUFFIX=$(SUFFIX) NO_DIFF=$(NO_DIFF) \
-			FPGA_BIT_HOME=$$fpga_bit_home \
-			WORKLOAD=$$workload_txt"; \
-		host_env=("FPGA_DDR_LOAD_CMD=$$ddr_load_cmd"); \
-		ila_env=$$($(MAKE) -s --no-print-directory -C $(FPGA_DIFF_HOME) ila_host_env \
-			FPGA_BACKEND=$(FPGA_BACKEND) PRJ_NAME="$(PRJ_NAME)" CPU=$(CPU) \
-			SUFFIX=$(SUFFIX) NO_DIFF=$(NO_DIFF) \
-			UVHS_RUNTIME="$(UVHS_RUNTIME)"); \
-		eval "$$ila_env"; \
-		[ -z "$${FPGA_ILA_ARM_CMD:-}" ] || host_env+=("FPGA_ILA_ARM_CMD=$$FPGA_ILA_ARM_CMD"); \
-		[ -z "$${FPGA_ILA_UPLOAD_CMD:-}" ] || host_env+=("FPGA_ILA_UPLOAD_CMD=$$FPGA_ILA_UPLOAD_CMD"); \
-		exec env "$${host_env[@]}" "$$host" $(RUN_HOST_ARGS))
+		test -n "$$host" || host=$$(find "$$fpga_bit_home" -type f -path "*/build/fpga-host" -print -quit); \
+		host_env=$$($(MAKE) -s -C env-scripts/fpga_diff host_env \
+			FPGA_BACKEND=$(FPGA_BACKEND) CPU=$(CPU) SUFFIX="$(SUFFIX)" \
+			NO_DIFF=$(NO_DIFF) BIND_UART=$(BIND_UART) REMOTE_ENV="$(REMOTE_ENV)" \
+			FPGA_RUNTIME="$(if $(filter $(FPGA_HOST),$(FPGA_RUNTIME)),,$(FPGA_RUNTIME))" \
+			$(if $(strip $(UVHS_ILA_GATED_CLOCK)),UVHS_ILA_GATED_CLOCK="$(UVHS_ILA_GATED_CLOCK)",) \
+			WORKLOAD="$$workload_txt") || exit $$?; \
+		eval "$$host_env"; \
+		trap "$${FPGA_HOST_CLEANUP_CMD:-:}" 0; \
+		trap "exit 130" INT; trap "exit 143" TERM; \
+		"$$host" $(RUN_HOST_ARGS)) || host_status=$$?; \
+	if [ "$(FPGA_KEEP_RUNTIME)" != 1 ]; then \
+		$(call remote,$(FPGA_RUNTIME),$(REMOTE_DIR),\
+			$(MAKE) -C env-scripts/fpga_diff runtime_stop \
+			FPGA_BACKEND=$(FPGA_BACKEND) CPU=$(CPU) SUFFIX="$(SUFFIX)" \
+			NO_DIFF=$(NO_DIFF)) || runtime_status=$$?; \
+	fi; \
+	((host_status == 0)) || exit $$host_status; \
+	exit $$runtime_status
 
 xiangshan nutshell xs nut:
 	@:
