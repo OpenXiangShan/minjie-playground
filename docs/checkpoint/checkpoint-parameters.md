@@ -2,7 +2,7 @@
 
 The checkpoint scripts provide `generate_checkpoint.py` as the main entry point.
 
-It always runs four stages:
+The normal flow runs four stages; `--cluster-only` only selects points from an existing BBV:
 1. `profiling`
 2. `cluster`
 3. `checkpoint`
@@ -68,10 +68,40 @@ Default naming:
 - Optional
 - Overrides SimPoint `-maxK` during clustering
 - Must be a positive integer
-- The effective value is `max(built-in workload default, user input)`
-- Current built-in special cases:
-  - `xalancbmk` has a minimum of `100`
-  - Other workloads have a minimum of `30`
+- An explicit value is now an exact upper bound, including values below the
+  workload default. Previously the script imposed the default as a lower bound.
+- When omitted, the default is `100` for the exact workload name `xalancbmk`,
+  and `30` otherwise.
+- The bound is capped at the BBV interval count, and also at `--num-samples`
+  for `bbv-stratified`. The actual number of clusters is chosen by SimPoint.
+- Not applicable to `random` sampling.
+
+### Sampling options
+
+- `--sampling-method simpoint|random|bbv-stratified`
+  Default: `simpoint` for a new selection. Checkpoint resume inherits saved options.
+- `--num-samples`
+  Exact positive sample budget, required for `random` and `bbv-stratified`;
+  rejected for `simpoint`. Must not exceed the available BBV interval count.
+- `--seed`
+  Sampling seed, default `42`.
+- `--seedkm` / `--seedproj`
+  SimPoint initialization/projection seeds, default `100000` / `200000`.
+  All seeds are integers between `0` and `2147483647`.
+- `--cluster-only`
+  Reuse existing profiling without executing NEMU/QEMU, generating checkpoints,
+  or rewriting source metadata. Requires `--archive-id` and
+  `--cluster-output-root`. `--input-path` still supplies workload names; DTB
+  inspection is skipped. Only an omitted `--resume-after` or `profiling` is valid.
+- `--cluster-output-root`
+  A new experiment directory; output is placed under `<root>/<workload>/`.
+  An existing root is rejected. Applicable only to `--cluster-only`.
+
+For direct use of `step_cluster.py`, `--output-dir` selects a new per-workload
+experiment directory. The script already runs only the selection stage.
+Existing nonempty output directories are rejected.
+
+See [sampling.md](./sampling.md) for the allocation algorithm and examples.
 
 ### `--max-workers`
 
@@ -95,6 +125,14 @@ Semantics:
   Skips profiling and cluster, then regenerates checkpoints
 - `auto`
   Automatically chooses the resume stage based on existing files in the archive
+
+When resuming after `cluster`, or `auto` reuses an existing selection, omitted
+sampling options are inherited from `cluster/<workload>/sampling.json`.
+Explicit conflicting sampling options or `--max-k` are rejected before modifying
+point/weight files. For legacy outputs without `sampling.json`, omit sampling
+options and `--max-k` when reusing the selection. To select new points, use
+`--resume-after profiling` (which replaces downstream stages) or a separate
+cluster-only experiment.
 
 ## Automatic Naming
 

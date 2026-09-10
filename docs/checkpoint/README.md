@@ -25,7 +25,7 @@ The scripts under `scripts/checkpoint/` are organized by stage:
 - `step_profiling.py`
   Generates BBV files.
 - `step_cluster.py`
-  Runs SimPoint clustering.
+  Selects intervals using SimPoint, uniform random sampling, or BBV-stratified random sampling.
 - `step_checkpoint.py`
   Generates checkpoints from cluster points and validates the outputs.
 - `step_metadata.py`
@@ -52,7 +52,7 @@ Common inputs:
   Checkpoint interval. The default is `20000000`.
 - `max_k`
   Optional. Overrides SimPoint `-maxK`. The effective value is
-  `max(built-in workload default, user input)`.
+  the explicitly requested upper bound (it can be below the workload default).
 - `max_workers`
   Maximum number of parallel workloads in directory mode. The default is `3`.
 - `nemu`
@@ -62,6 +62,10 @@ Common inputs:
   before use.
 - `resume_after`
   Optional. Supported values are `profiling`, `cluster`, and `auto`.
+
+The new sampling modes and cluster-only experiments are available through the
+local Python CLI. See [sampling.md](./sampling.md) for examples, weights, and
+validation guidance.
 
 See [checkpoint-parameters.md](./checkpoint-parameters.md) for full parameter
 semantics and environment requirements.

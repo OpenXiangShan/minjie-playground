@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from sampling import (add_sampling_arguments, resolve_sampling_options,
+                      sampling_options_from_args)
+
 AUTO_RESUME = "auto"
 COMPLETE_STATE = "complete"
 AUTO_RESUME_BACKUP_SUFFIX = "auto-resume-full"
@@ -1021,11 +1024,19 @@ def run_workload(*,
                  mem_bind: str = "0",
                  metadata_dir: str | None = None,
                  generate_metadata: bool = True,
-                 progress: WorkloadProgress | None = None
+                 progress: WorkloadProgress | None = None,
+                 sampling_options: dict | None = None
                  ) -> dict[str, str | int]:
     from step_checkpoint import run_checkpoint_step
     from step_profiling import run_profiling_step
-    from step_cluster import run_cluster_step
+    from step_cluster import run_cluster_step, resume_sampling_options
+
+    if resume_after in ("cluster", AUTO_RESUME) and os.path.exists(
+            os.path.join(cluster_dir(archive_root, workload_name), "simpoints0")):
+        sampling_options = resume_sampling_options(
+            archive_root, workload_name, sampling_options, max_k)
+    else:
+        sampling_options = resolve_sampling_options(sampling_options)
 
     layout = build_archive_layout(archive_root)
     ensure_directories(layout.values())
@@ -1071,6 +1082,7 @@ def run_workload(*,
         "qemu_memory": effective_qemu_memory or "",
         "max_k": max_k,
         "resume_after": resume_after,
+        **sampling_options,
     }
     request_dir = metadata_dir or layout["metadata"]
     metadata_path = write_request_metadata(request_dir,
@@ -1123,6 +1135,7 @@ def run_workload(*,
                 archive_root=archive_root,
                 workload=workload_name,
                 max_k=max_k,
+                sampling_options=sampling_options,
                 cpu_bind=cpu_bind,
                 mem_bind=mem_bind,
             )
@@ -1139,6 +1152,7 @@ def run_workload(*,
                 archive_root=archive_root,
                 workload=workload_name,
                 max_k=max_k,
+                sampling_options=sampling_options,
                 cpu_bind=cpu_bind,
                 mem_bind=mem_bind,
             )
@@ -1229,7 +1243,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="Checkpoint interval")
     parser.add_argument("--max-k",
                         type=int,
-                        help="Optional SimPoint maxK override; effective value is max(workload default, user value)")
+                        help="Exact SimPoint maxK override; default 30 (100 for xalancbmk)")
     parser.add_argument("--max-workers",
                         type=int,
                         default=3,
@@ -1245,15 +1259,43 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume-after",
                         choices=["profiling", "cluster", AUTO_RESUME],
                         help="Resume from a later stage")
+    add_sampling_arguments(parser)
+    parser.add_argument("--cluster-only", action="store_true",
+                        help="Reuse existing BBVs and select points without running a simulator")
+    parser.add_argument("--cluster-output-root",
+                        help="New experiment root required with --cluster-only; one directory per workload")
     return parser
 
 
 def main() -> int:
     args = build_arg_parser().parse_args()
     validate_input_args(args)
+    sampling_options = sampling_options_from_args(args)
+    if not args.cluster_only and args.cluster_output_root:
+        raise ValueError("--cluster-output-root requires --cluster-only")
+    if args.resume_after not in ("cluster", AUTO_RESUME) or args.cluster_only:
+        resolve_sampling_options(sampling_options)
 
     input_mode, entries, common_suffix = load_input_entries(args.input_path,
                                                             args.name)
+    if args.cluster_only:
+        if not args.archive_id or not args.cluster_output_root:
+            raise ValueError("--cluster-only requires --archive-id and --cluster-output-root")
+        if args.resume_after not in (None, "profiling"):
+            raise ValueError("--cluster-only always reuses profiling; do not resume after cluster/auto")
+        from step_cluster import run_cluster_step
+        archive_root = build_archive_root(args.archive_id)
+        for entry in entries:
+            validate_resume_artifacts(archive_root, entry["name"], "profiling")
+        output_root = Path(args.cluster_output_root).resolve()
+        output_root.mkdir(parents=True, exist_ok=False)
+        for entry in entries:
+            run_cluster_step(archive_root=archive_root, workload=entry["name"],
+                             max_k=args.max_k, sampling_options=sampling_options,
+                             output_dir=str(output_root / entry["name"]))
+        print(f"Cluster experiment: {output_root}", flush=True)
+        return 0
+
     for entry in entries:
         validate_input_args(
             build_single_run_args(input_path=entry["bin"],
@@ -1271,7 +1313,6 @@ def main() -> int:
                                                             entries[0]["name"])
         archive_root = build_archive_root(archive_id)
         ensure_directories(build_archive_layout(archive_root).values())
-        clear_aggregate_metadata(archive_root)
         write_request_metadata(
             os.path.join(archive_root, "metadata"),
             {
@@ -1283,6 +1324,7 @@ def main() -> int:
                 "copies": args.copies,
                 "qemu_memory": args.qemu_memory or "auto",
                 "max_k": args.max_k,
+                **sampling_options,
                 "resume_after": args.resume_after,
             },
         )
@@ -1299,6 +1341,7 @@ def main() -> int:
                 qemu_memory=args.qemu_memory,
                 max_k=args.max_k,
                 resume_after=args.resume_after,
+                sampling_options=sampling_options,
                 progress=progress,
             )
         except Exception as exc:
@@ -1316,7 +1359,6 @@ def main() -> int:
     archive_root = build_archive_root(archive_id)
     layout = build_archive_layout(archive_root)
     ensure_directories(layout.values())
-    clear_aggregate_metadata(archive_root)
     write_request_metadata(
         layout["metadata"],
         {
@@ -1327,6 +1369,7 @@ def main() -> int:
             "copies": args.copies,
             "qemu_memory": args.qemu_memory or "auto",
             "max_k": args.max_k,
+            **sampling_options,
             "resume_after": args.resume_after,
             "max_workers": args.max_workers,
             "common_suffix": common_suffix or "",
@@ -1371,6 +1414,7 @@ def main() -> int:
                                      copies=args.copies,
                                      qemu_memory=args.qemu_memory,
                                      max_k=args.max_k,
+                                     sampling_options=sampling_options,
                                      resume_after=args.resume_after,
                                      cpu_bind=cpu_bind,
                                      mem_bind=mem_bind,

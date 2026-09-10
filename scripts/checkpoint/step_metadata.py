@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 import re
 from itertools import product
@@ -61,6 +62,9 @@ def cluster_weight(cluster_path, spec_app):
 
     weights_path = Path(cluster_path) / spec_app / "weights0"
     simpoints_path = Path(cluster_path) / spec_app / "simpoints0"
+    # New sampling runs preserve every selected point, including tiny strata.
+    sampling_path = Path(cluster_path) / spec_app / "sampling.json"
+    minimum_weight = 0.0 if sampling_path.exists() else 1e-4
 
     with weights_path.open("r", encoding="utf-8") as handle:
         for line in handle:
@@ -70,17 +74,24 @@ def cluster_weight(cluster_path, spec_app):
     with simpoints_path.open("r", encoding="utf-8") as handle:
         for line in handle:
             point, cluster_id = line.split()
-            if float(weights[cluster_id]) > 1e-4:
+            value = float(weights[cluster_id])
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"invalid weight for point {point}: {value}")
+            if value > minimum_weight:
                 points[point] = weights[cluster_id]
 
     return points
 
 
 def build_workload_metadata(profiling_log, cluster_path, spec_app):
-    return {
+    result = {
         "insts": profiling_instrs(profiling_log, spec_app),
         "points": cluster_weight(cluster_path, spec_app),
     }
+    sampling_path = Path(cluster_path) / spec_app / "sampling.json"
+    if sampling_path.exists():
+        result["sampling"] = json.loads(sampling_path.read_text())["options"]
+    return result
 
 
 def write_json_file(target_path, payload):
@@ -96,6 +107,12 @@ def build_aggregated_json(json_result, coverage_limit=None):
             "insts": info["insts"],
             "points": {},
         }
+        sampling = info.get("sampling")
+        if sampling:
+            result[workload]["sampling"] = sampling
+        # A top-weight subset is not the designed random sample. Preserve the
+        # full set even in the compatibility cov0.3 file for randomized modes.
+        preserve_all = sampling and sampling["sampling_method"] in ("random", "bbv-stratified")
         cumulative_weight = 0.0
         sorted_points = sorted(info["points"].items(),
                                key=lambda item: float(item[1]),
@@ -103,7 +120,7 @@ def build_aggregated_json(json_result, coverage_limit=None):
         for point, weight in sorted_points:
             result[workload]["points"][point] = weight
             cumulative_weight += float(weight)
-            if coverage_limit is not None and cumulative_weight >= coverage_limit:
+            if not preserve_all and coverage_limit is not None and cumulative_weight >= coverage_limit:
                 break
     return result
 
