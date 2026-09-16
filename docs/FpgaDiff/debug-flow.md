@@ -85,7 +85,7 @@ Recommended structure:
 # Progress: <job-name>
 
 ## Environment
-- Build host: <BUILD_REMOTE>
+- FPGA build remote: <user@fpga-build-host>
 - Vivado host: <VIVADO_REMOTE>
 - FPGA host: <FPGA_REMOTE>
 - Release: <RELEASE_PATH>
