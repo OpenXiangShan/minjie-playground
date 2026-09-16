@@ -269,7 +269,6 @@ rsync -a "$BOOTRAM_BIN" "$FPGA_RUNTIME:$REMOTE_DIR/ready-to-run/bootram.bin"
 | `FPGA_RUNTIME` | `$FPGA_HOST` | Bitstream, reset, memory, and ILA machine; empty means local |
 | `REMOTE_DIR` | current checkout | Minjie checkout path on `FPGA_HOST` and `FPGA_RUNTIME` |
 | `REMOTE_ENV` | `source ~/.bash_profile &&` | Environment setup for every SSH command |
-| `UVHS_ILA_GATED_CLOCK` | 0804 replicated gated-clock paths | Comma-separated gated capture clocks |
 | `FPGA_BIT_HOME` | none | Bitstream bundle directory |
 | `WORKLOAD` | none | Workload directory containing `.bin` and `.txt` |
 | `DIFF` | empty | NEMU SO path for diff mode |
@@ -404,9 +403,8 @@ make run_host \
   CPU=<CPU> SUFFIX=<tag>
 ```
 
-`UVHS_ILA_GATED_CLOCK` defaults to the two replicated gated-clock paths in the
-0804 runtime database. Override it with the exact comma-separated names from
-`query -capture` for another bitstream or runtime database.
+env-scripts discovers enabled non-global capture clocks from `query -capture`
+when it arms ILA, so the caller does not provide gated-clock paths.
 
 The ILA upload hook clears capture state after every attempted upload, so
 runtime cleanup does not call `ila_clear`. Unless `FPGA_KEEP_RUNTIME=1`, Minjie

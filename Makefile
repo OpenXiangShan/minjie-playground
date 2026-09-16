@@ -406,7 +406,6 @@ run_host:
 			FPGA_BACKEND=$(FPGA_BACKEND) CPU=$(CPU) SUFFIX="$(SUFFIX)" \
 			NO_DIFF=$(NO_DIFF) BIND_UART=$(BIND_UART) REMOTE_ENV="$(REMOTE_ENV)" \
 			FPGA_RUNTIME="$(if $(filter $(FPGA_HOST),$(FPGA_RUNTIME)),,$(FPGA_RUNTIME))" \
-			$(if $(strip $(UVHS_ILA_GATED_CLOCK)),UVHS_ILA_GATED_CLOCK="$(UVHS_ILA_GATED_CLOCK)",) \
 			WORKLOAD="$$workload_txt") || exit $$?; \
 		eval "$$host_env"; \
 		trap "$${FPGA_HOST_CLEANUP_CMD:-:}" 0; \
