@@ -1,0 +1,4 @@
+interface:
+  display_name: "XiangShan 编译、运行与 SPECCPU 批量任务"
+  short_description: "编译运行 XiangShan，并批量运行 SPECCPU 检查点"
+  default_prompt: "使用 $xiangshan-build-run 准备并编译 XiangShan，运行指定工作负载；只有我明确给出配置后才批量运行 SPECCPU 检查点。"
