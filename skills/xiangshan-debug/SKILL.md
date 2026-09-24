@@ -28,6 +28,7 @@ description: >-
 2. `cr<日期>-<短 commit>-<配置>` 可提供候选 commit。例如 `cr260917-c8d7b3a5c-DefaultConfig` 对应候选 `c8d7b3a5c`；使用前必须在源码仓库中解析为唯一完整 commit。
 3. 本地日志可用，且已有源码路径或可验证 commit 时，不解析用户同时提供的 GitHub PR、trigger 或 Actions run 链接。
 4. 只有本地信息不能定位日志或源码版本时，才使用远端链接补齐缺失信息。
+5. 如果指定了香山的本地路径，就是使用这个路径下的香山代码；如果提供了香山commit并且没有指定要使用的香山本地路径，就从github上下载香山代码并切换到对应的commit，香山仓库链接：https://github.com/OpenXiangShan/XiangShan.git；如果访问github香山仓库链接失败，在本地相似路径下，查找是否有包含指定commit的香山仓库，拷贝过来，切换到对应commit，删除out文件夹。
 
 批量 SPEC 日志和少量 workload 使用相同的分类、复现和证据规则。
 
@@ -57,6 +58,7 @@ description: >-
 2. 主类型包括 `stuck`、`liveness`、`mismatch`、`assertion`、`bad_trap` 和 `fatal`。
 3. 出现 `No instruction of core <id> commits for <cycles> cycles, maybe get stuck` 时，主类型必须是 `stuck`，不能归入 `liveness`。
 4. REF 多执行一条指令后产生的 mismatch、`ABORT`、signal 或级联 assert 只作为后续结果，不能覆盖首错。
+5. 如果输入文件没有找到，或者 SSH 链接出问题，对应的检查点不需要进行复现、修复和回归。
 
 ### 合并规则
 
