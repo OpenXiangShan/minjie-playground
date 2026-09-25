@@ -29,17 +29,7 @@ FDT_KNOWN_OFFSETS = (2 * 1024 * 1024, 1536 * 1024, 0)
 KIB = 1024
 MIB = 1024 * KIB
 GIB = 1024 * MIB
-QEMU_CPU = (
-    "rv64,zicond=true,v=true,vlen=128,h=true,sv39=true,sv48=true,"
-    "sv57=false,sv64=false,smstateen=true,sscofpmf=true,svade=true,"
-    "svinval=true,svnapot=true,svpbmt=true,zacas=true,zawrs=true,"
-    "zba=true,zbb=true,zbc=true,zbkb=true,zbkc=true,zbkx=true,zbs=true,"
-    "zca=true,zcb=true,zcmop=true,zfa=true,zfh=true,zfhmin=true,"
-    "zicntr=true,zicsr=true,zifencei=true,zihintntl=true,"
-    "zihintpause=true,zihpm=true,zimop=true,zkn=true,zknd=true,zkne=true,"
-    "zknh=true,zksed=true,zksh=true,zkt=true,zvbb=true,zvfh=true,"
-    "zvfhmin=true,zvkt=true"
-)
+QEMU_CPU = "rv64,zicond=true,v=true,vlen=128,h=true,sv39=true,sv48=true,sv57=false,sv64=false,smstateen=true,sscofpmf=true,smcntrpmf=true,svade=true,svinval=true,svnapot=true,svpbmt=true,zacas=true,zawrs=true,zba=true,zbb=true,zbc=true,zbkb=true,zbkc=true,zbkx=true,zbs=true,zca=true,zcb=true,zcmop=true,zfa=true,zfh=true,zfhmin=true,zicntr=true,zicsr=true,zifencei=true,zihintntl=true,zihintpause=true,zihpm=true,zimop=true,zkn=true,zknd=true,zkne=true,zknh=true,zksed=true,zksh=true,zkt=true,zvbb=true,zvfh=true,zvfhmin=true,zvkt=true"
 
 
 @dataclass(frozen=True)
