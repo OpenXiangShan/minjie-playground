@@ -7,3 +7,9 @@ worktrees/
 *.jou
 *.log
 
+# Auto-debugger runtime checkout
+scripts/autodebugger/.work/
+
+# Local auto-debugger end-to-end fixtures and results
+.test-autodebugger-source/
+.test-autodebugger/

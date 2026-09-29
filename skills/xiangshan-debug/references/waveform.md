@@ -22,7 +22,7 @@ reproduction/
   exit-code.txt
   wave.vcd or wave.fst
   analysis/
-    signal-list.txt
+    signal-candidates.txt
     changes-<window>.json
     value-<signal>-<time>.json
 ```
@@ -35,34 +35,57 @@ python3 -c 'import pywellen; print("pywellen: available")'
 
 如果导入失败，先在当前 Python 环境安装或启用 `pywellen`，并在分析记录中保存依赖错误；不能猜测波形信号值。
 
-## 2. 打开波形并列出信号
+## 2. 打开波形并筛选候选信号
 
-`pywellen.Waveform` 根据扩展名和文件内容读取 VCD/FST。下面的代码只使用 `pywellen` 和 Python 标准库，不需要当前 skill 的辅助脚本：
+`pywellen.Waveform` 根据扩展名和文件内容读取 VCD/FST。大型 XiangShan 波形可能包含数百万个变量；默认不得把 `wave.all_vars()` 的完整结果写入文件、转成 `list`/`set`，也不得把完整信号表回显到模型上下文。如果提供了香山代码和verilog代码，可以通过阅读相关的代码，理解行为来筛选关键的信号。应在单次迭代中按当前错误的模块、信号名称、字段和后缀过滤，只持久化小型候选集，同时记录扫描总数和是否截断。只有窄过滤无法定位且报告明确说明原因时，才逐步放宽关键词，仍不生成全量清单。
+
+下面的代码只使用 `pywellen` 和 Python 标准库，不需要当前 skill 的辅助脚本。先根据日志和源码把 `TOKENS` 改成当前问题所需的最小集合；`MAX_MATCHES` 是防止候选输出失控的硬上限：
 
 ```bash
 WAVE=/absolute/path/to/reproduction/wave.vcd
 ANALYSIS=/absolute/path/to/reproduction/analysis
 mkdir -p "$ANALYSIS"
 
-WAVE="$WAVE" OUT="$ANALYSIS/signal-list.txt" python3 - <<'PY'
+WAVE="$WAVE" OUT="$ANALYSIS/signal-candidates.txt" python3 - <<'PY'
 import os
 from pathlib import Path
 import pywellen
 
+TOKENS = ("decode", "commit", "illegal", "trapinstinfo")
+MAX_MATCHES = 5000
 wave = pywellen.Waveform(
     path=os.environ["WAVE"],
     remove_scopes_with_empty_name=False,
 )
-lines = [
-    f"{var.full_name}\twidth={var.bitwidth}\tsignal_id={var.signal_id}"
-    for var in wave.all_vars()
-]
-Path(os.environ["OUT"]).write_text("\n".join(lines) + "\n", encoding="utf-8")
-print(f"signals: {len(lines)}")
+scanned = 0
+matched = 0
+matches = []
+for var in wave.all_vars():
+    scanned += 1
+    name = var.full_name
+    lowered = name.lower()
+    if any(token in lowered for token in TOKENS):
+        matched += 1
+        if len(matches) < MAX_MATCHES:
+            matches.append(
+                f"{name}\twidth={var.bitwidth}\tsignal_id={var.signal_id}"
+            )
+
+truncated = matched > len(matches)
+header = (
+    f"scanned={scanned} matched={matched} matched_saved={len(matches)} "
+    f"max_matches={MAX_MATCHES} truncated={str(truncated).lower()} "
+    f"tokens={','.join(TOKENS)}"
+)
+Path(os.environ["OUT"]).write_text(
+    header + "\n" + "\n".join(matches) + ("\n" if matches else ""),
+    encoding="utf-8",
+)
+print(header)
 PY
 ```
 
-如果实际文件是 FST，只把 `WAVE` 改成 `wave.fst`；其余代码不变。信号的完整路径以 `signal-list.txt` 为准，不能凭模块名称猜测路径。
+如果实际文件是 FST，只把 `WAVE` 改成 `wave.fst`；其余代码不变。信号的完整路径以筛选后的 `signal-candidates.txt` 和后续精确查询为准，不能凭模块名称猜测路径。若候选达到上限，先收紧模块层级、字段后缀或源码推导出的实例名，不要提高上限来保存全设计信号。
 
 ## 3. 直接查询时间点和窗口
 
@@ -130,7 +153,7 @@ print(f"changes: {len(changes)}")
 PY
 ```
 
-`stream_changes` 返回的 `signal_id` 需要结合 `signal-list.txt` 中的路径映射解释；不要仅凭 ID 推断信号名称。没有 `build/rtl` 时，查询结果只包含 waveform-only evidence；有 `build/rtl` 时，也必须手工核对 RTL 信号与同一 commit 的 Chisel 源码，不能把未经验证的名称匹配当作精确归属。
+`stream_changes` 返回的 `signal_id` 需要结合 `signal-candidates.txt` 中的路径映射解释；不要仅凭 ID 推断信号名称。没有 `build/rtl` 时，查询结果只包含 waveform-only evidence；有 `build/rtl` 时，也必须手工核对 RTL 信号与同一 commit 的 Chisel 源码，不能把未经验证的名称匹配当作精确归属。
 
 ## 4. 查看顺序与判定
 
@@ -156,5 +179,5 @@ PY
 - 波形文件不存在或大小为 `0`：停止查询并记录缺少输入；波形生成属于其他运行步骤，本文件不重新生成波形，也不使用旧日志冒充新波形。
 - VCD 和 FST：两者都通过 `WAVE` 传入；默认示例是 VCD，不要把 VCD 的路径或时间单位假定为 FST 的路径或时间单位。
 - `pywellen` 不可用：在当前 Python 环境安装或启用依赖，记录导入错误，不猜测信号值。
-- 信号路径不存在：先用 `wave.all_vars()` 生成完整信号清单，再从完整路径选择查询目标。
+- 信号路径不存在：对 `wave.all_vars()` 做一次流式、关键词受限的候选筛选；逐步调整模块/字段关键词，不生成或保存完整信号清单。
 - RTL 与 waveform commit 不一致：停止查询，重新选择同一 commit/config 的 RTL 和波形。

@@ -77,7 +77,7 @@ printf 'emu exit code: %s\n' "$EMU_STATUS"
 exit "$EMU_STATUS"
 ```
 
-每个并发运行使用不同的 `RUN_DIR` 和运行时模型输出目录。参数名称与终止消息以当前 emu `--help` 为准；外层 `timeout` 只用于明确标注的 smoke。
+每个并发运行使用不同的 `RUN_DIR` 和运行时模型输出目录。参数名称以当前 emu `--help` 和参数实现为准；外层 `timeout` 只用于明确标注的 smoke。
 
 初始版本复现时，先把 `RUN_DIR` 设为 `reproduction/candidates/<checkpoint-slug>/` 运行预选 checkpoint；只有该候选稳定复现首错，才将其日志和波形固化到 `reproduction/` 根部。候选不能复现时按记录顺序继续运行同类失败 checkpoint，包含首个候选最多 5 个；全部失败时保留候选日志，不生成代表波形，并在修复后使用 `after-fix/validation/<checkpoint-slug>/` 保存基于日志和源码的回归验证。
 
