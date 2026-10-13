@@ -52,7 +52,7 @@ sha256sum "$EMU_REAL"
 
 按源码实际接口追加 `CONFIG`、`WITH_DRAMSIM3`、线程等参数。若当前版本的 ChiselDB 变量不同，使用源码定义的名称；不要照搬模板中的变量。
 
-出现 helper 未定义、重复 `SSimTop` 或源码中不存在的 C++ 符号时，依次核对：
+编译或链接错误提示生成物、源码或配置不一致时，核对：
 
 1. FIR/RTL 是否由当前源码和配置生成；
 2. C++ model 与对象文件是否来自同一配置；
@@ -71,15 +71,22 @@ set -u
 : "${EMU:?Set EMU to the copied Verilator debug or fixed emu}"
 : "${CHECKPOINT:?Set CHECKPOINT to the representative or candidate checkpoint}"
 : "${NEMU:?Set NEMU to the matching reference-model shared object}"
-: "${FAILURE_INSTR:?Set FAILURE_INSTR to the original failure instrCnt; use 40000000 for assertion logs without instrCnt}"
-: "${RUN_DIR:?Set RUN_DIR to this run's artifact directory}"
+: "${RUN_LIMIT:?Set the execution budget independently of unknown failure positions}"
+: "${RUN_DIR:?Set RUN_DIR to the run artifact directory}"
 
-RUN_MARGIN=${RUN_MARGIN:-10000}
-RUN_LIMIT=$((FAILURE_INSTR + RUN_MARGIN))
+RUN_LIMIT_KIND=${RUN_LIMIT_KIND:-instr}
+case "$RUN_LIMIT_KIND" in
+  instr) set -- -I "$RUN_LIMIT" ;;
+  cycle) set -- -C "$RUN_LIMIT" ;;
+  *)
+    printf 'Invalid RUN_LIMIT_KIND: %s\n' "$RUN_LIMIT_KIND" >&2
+    exit 2
+    ;;
+esac
 mkdir -p "$RUN_DIR"
 "$EMU" -i "$CHECKPOINT" \
   --diff "$NEMU" \
-  --enable-fork -I "$RUN_LIMIT" \
+  --enable-fork "$@" \
   >"$RUN_DIR/simulator_out.txt" \
   2>"$RUN_DIR/simulator_err.txt"
 EMU_STATUS=$?
@@ -93,9 +100,11 @@ exit "$EMU_STATUS"
 
 仿真输出必须直接流式写入文件；不要在 Python `PIPE` 中积攒数 GB 的 stdout/stderr。父进程退出后，在限定等待窗口内轮询本次 `RUN_DIR` 的 `build`/波形目录，且只选择本次 invocation 新生成的非空 FST/VCD。不要递归扫描整个源码树，也不要使用其他任务的缓存波形。归档前将 `build/emu` 等绝对路径符号链接解析为任务目录内的普通文件，并记录二进制 sha256。
 
-`RUN_MARGIN` 是运行上限余量，不是新的错误位置。先使用小而明确的余量（通常 `10000`），若日志显示 limit 早于首错，只能根据该差异做一次有记录的调整；无论如何，必须保存实际 `-I/-C`、退出原因和观测到的最大指令数。正常达到 limit 且未出现首错只能判为“未重现”。
+`RUN_LIMIT` 是本次执行的最终上限，`RUN_LIMIT_KIND` 选择指令数（`instr`，默认）或周期数（`cycle`）。已知首错 `instrCnt` 时，可取 `instrCnt + RUN_MARGIN`；只有 cycle 时，可取 `cycle + RUN_MARGIN` 并选择 `cycle`。`RUN_MARGIN` 可默认取 `10000`，按所需观察窗口调整，不是新的错误位置。首错位置未知时，根据用例和可用资源单独选择运行预算。保存实际 `-I/-C`、退出原因和观测到的计数；基线正常达到 limit 且未出现首错只能判为“未重现”。
 
-主错误类型为 `assertion` 且原始日志没有出错节点的 `instrCnt` 时，调用包装脚本前设置 `FAILURE_INSTR=40000000`；对应 `checkpoints.txt` 的 `error_instrCnt` 写入 `40000000`。如果 cycle 也缺失，`error_cycle` 写入 `unknown`；并在 `bug-analysis.md`、`execution.md` 中说明该指令数是默认回退值，不是日志观测值。
+每次调整上限或其他参数，都应记录所检验的假设、参数差异、预期结果和停止条件。达到既定运行预算或没有新的调查依据时停止，保留全部尝试日志。
+
+原始日志没有出错节点的 `instrCnt` 或 cycle 时，`checkpoints.txt` 对应字段写 `unknown`。选定的 `RUN_LIMIT`、选择依据和实际执行计数记录到 `execution.md`；不能用运行预算代替日志观测到的错误位置。
 
 ## patch 检查
 

@@ -4,53 +4,60 @@ This reference extends [SKILL.md](../SKILL.md) with analysis of existing FSDB in
 
 For supplied failure-scene inputs, retain the original waveform path and identity and place completed exports and conversion records in `original/analysis/fsdb-export/` under the task root. For waveforms from a recorded baseline or fixed run, keep the exports within that run's analysis directory. Record the original simulator or FPGA/RTL build, commit/config, log association, and whether these match the source being analyzed. Conversion does not rerun the design or prove that Verilator reproduced the failure. If build provenance is missing, record the gap and limit conclusions to waveform facts.
 
-Use `eda01` to extract selected times and signals from an FSDB into VCD, then convert it to FST.
+Use a host with compatible Verdi tools to extract selected times and signals from an FSDB into VCD, then convert it to FST. The tools may also run locally; adapt the SSH examples accordingly.
 Reduce the selection before exporting large waveforms. Keep the original FSDB for later extraction.
 
 SSH provides access to the conversion tools; it does not imply that files must be copied.
-Shared NFS may expose the same absolute paths on the local machine and `eda01`; verify this for the current task.
+Shared NFS may expose the same absolute paths on the local machine and the selected conversion host; verify this for the current task.
 Check input and output access separately: a shared FSDB can be read directly while
-intermediate files are written to scratch space on `eda01`.
+intermediate files are written to scratch space on the selected conversion host.
 
 Replace example paths, `/tb/...` scopes, and time windows with actual values.
 Run local examples in the same shell so their variables remain available.
 
-## 1. Load the tools on eda01
+## 1. Select the conversion host and tools
 
-The default noninteractive SSH shell on `eda01` may not initialize `module`.
+The default noninteractive SSH shell on the selected conversion host may not initialize `module`.
 Use a Bash login shell:
 
 ```bash
-ssh -o BatchMode=yes -o ConnectTimeout=15 eda01 'bash -l -s' <<'REMOTE'
+: "${fsdb_host:?Set the host with the FSDB conversion tools}"
+fsdb_modules=${fsdb_modules:-}
+ssh -o BatchMode=yes -o ConnectTimeout=15 "$fsdb_host" "bash -l -s -- '$fsdb_modules'" <<'REMOTE'
 set -euo pipefail
 export LC_ALL=C
-type module
-module load synopsys/vcs/Q-2020.03-SP2 synopsys/verdi/V-2023.12-SP1-1
-module list 2>&1
+if [[ -n "$1" ]]; then
+    type module
+    read -r -a fsdb_tool_modules <<< "$1"
+    module load "${fsdb_tool_modules[@]}"
+    module list 2>&1
+fi
 command -v fsdb2vcd vcd2fst
 REMOTE
 ```
 
-The tools used here are Verdi's `fsdb2vcd` and `/usr/bin/vcd2fst`.
-`LC_ALL=C` avoids unsupported-locale warnings. If these module versions are unavailable,
-use `module avail` in the login shell and record the versions selected.
-The loaded VCS version need not match the simulator that generated the FSDB.
+Choose `fsdb_host` from the current environment. For example, an installation may provide
+`eda01` with modules `synopsys/vcs/Q-2020.03-SP2` and `synopsys/verdi/V-2023.12-SP1-1`;
+these are environment examples, not required host names or versions. Use `module avail`
+when needed, and set `fsdb_modules` to the selected space-separated module names before
+running the examples. Leave it empty when `fsdb2vcd` and `vcd2fst` are already on PATH.
+Record the chosen host and actual tool versions. `LC_ALL=C` avoids unsupported-locale warnings.
 
 For format compatibility issues, inspect the log and Verdi version. An older-format warning
 does not necessarily mean failure; check exit status, errors, and exported data.
 
 ## 2. Check shared storage before copying
 
-### Input already accessible on eda01
+### Input already accessible on the conversion host
 
 For an input on shared NFS, use the same absolute path on both machines.
-Check that `eda01` can read it:
+Check that the selected conversion host can read it:
 
 ```bash
 fsdb_input=/shared/project/waves.fsdb
 fsdb_remote_input="$fsdb_input"
 ls -lh "$fsdb_input"
-ssh eda01 "bash -s -- '$fsdb_remote_input'" <<'REMOTE'
+ssh "$fsdb_host" "bash -s -- '$fsdb_remote_input'" <<'REMOTE'
 set -euo pipefail
 test -r "$1"
 ls -lh "$1"
@@ -64,17 +71,17 @@ every export.
 
 If shared access works, use `fsdb_remote_input` directly. No input copy is needed.
 
-### Input not accessible on eda01
+### Input not accessible on the conversion host
 
 Only when shared access is unavailable, stage a copy in a scratch directory:
 
 ```bash
 fsdb_input=/local/path/waves.fsdb
-fsdb_remote_dir=$(ssh eda01 'mktemp -d /tmp/fsdb-work-XXXXXXXX')
+fsdb_remote_dir=$(ssh "$fsdb_host" 'mktemp -d /tmp/fsdb-work-XXXXXXXX')
 fsdb_remote_input="$fsdb_remote_dir/waves.fsdb"
-scp "$fsdb_input" "eda01:$fsdb_remote_input"
+scp "$fsdb_input" "${fsdb_host}:$fsdb_remote_input"
 sha256sum "$fsdb_input"
-ssh eda01 "sha256sum '$fsdb_remote_input'"
+ssh "$fsdb_host" "sha256sum '$fsdb_remote_input'"
 ```
 
 Compare checksums and reuse the staged file for later exports. Keep the original elsewhere:
@@ -86,33 +93,36 @@ To make outputs directly accessible from both machines, use writable shared stor
 
 ```bash
 fsdb_remote_dir=/shared/project/original/analysis/fsdb-export
-ssh eda01 "mkdir -p '$fsdb_remote_dir'"
-ssh eda01 "df -h '$fsdb_remote_dir'"
+ssh "$fsdb_host" "mkdir -p '$fsdb_remote_dir'"
+ssh "$fsdb_host" "df -h '$fsdb_remote_dir'"
 ```
 
 Alternatively, use remote scratch space to keep large intermediate VCD files off NFS:
 
 ```bash
-fsdb_remote_dir=$(ssh eda01 'mktemp -d /tmp/fsdb-work-XXXXXXXX')
-ssh eda01 "df -h '$fsdb_remote_dir'"
+fsdb_remote_dir=$(ssh "$fsdb_host" 'mktemp -d /tmp/fsdb-work-XXXXXXXX')
+ssh "$fsdb_host" "df -h '$fsdb_remote_dir'"
 ```
 
 A scratch directory already created for input staging can also hold outputs.
 `fsdb_remote_input` remains the absolute input path, independent of the output directory.
 Record both paths.
 
-These SSH examples embed paths inside single quotes. Use paths without embedded single
-quotes, or adapt the shell escaping when such paths are required.
+These SSH examples embed paths and module selections inside single quotes. Use values without
+embedded single quotes, or adapt the shell escaping when such values are required.
 
 ## 3. Inspect FSDB metadata
 
 Read a summary before extracting signal changes:
 
 ```bash
-ssh eda01 "bash -l -s -- '$fsdb_remote_dir' '$fsdb_remote_input'" <<'REMOTE'
+ssh "$fsdb_host" "bash -l -s -- '$fsdb_remote_dir' '$fsdb_remote_input' '$fsdb_modules'" <<'REMOTE'
 set -euo pipefail
 export LC_ALL=C
-module load synopsys/vcs/Q-2020.03-SP2 synopsys/verdi/V-2023.12-SP1-1
+if [[ -n "$3" ]]; then
+    read -r -a fsdb_tool_modules <<< "$3"
+    module load "${fsdb_tool_modules[@]}"
+fi
 cd "$1"
 fsdb2vcd "$2" -summary > input.summary.txt 2>&1
 cat input.summary.txt
@@ -135,7 +145,7 @@ arrays. Expanding it to text VCD can consume much more disk space and memory.
 | --- | --- |
 | `-bt/-et` | Start and end times with explicit units |
 | `-s` | Signals or scopes, using FSDB paths separated by `/` |
-| `-level 1` | Direct signals of the selected scope with the Verdi version above |
+| `-level 1` | Direct signals of the selected scope; verify with the current tool version |
 | `-level 2` | A shallow selection including the next level |
 | `-level 99` | Deep extraction of a small subtree; a depth bound, not unlimited recursion |
 | `-keep_last_time` | Preserve the export's final time tag |
@@ -157,10 +167,13 @@ Run from the local shell after setting the input and output paths. Replace scope
 and use a new output prefix for each export:
 
 ```bash
-ssh eda01 "bash -l -s -- '$fsdb_remote_dir' '$fsdb_remote_input'" <<'REMOTE'
+ssh "$fsdb_host" "bash -l -s -- '$fsdb_remote_dir' '$fsdb_remote_input' '$fsdb_modules'" <<'REMOTE'
 set -euo pipefail
 export LC_ALL=C
-module load synopsys/vcs/Q-2020.03-SP2 synopsys/verdi/V-2023.12-SP1-1
+if [[ -n "$3" ]]; then
+    read -r -a fsdb_tool_modules <<< "$3"
+    module load "${fsdb_tool_modules[@]}"
+fi
 cd "$1"
 wave_input="$2"
 
@@ -193,7 +206,7 @@ REMOTE
 ```
 
 Bash arrays preserve argument boundaries. The quoted heredoc prevents local expansion of
-script variables; `$1` and `$2` are the paths passed to remote Bash. `vcd2fst -p` enables
+script variables; `$1` and `$2` are the paths passed to remote Bash, and `$3` selects optional modules. `vcd2fst -p` enables
 parallel conversion. Local variables are not otherwise automatically available over SSH.
 
 Windowed exports generally preserve absolute times and provide initial states at the window
@@ -217,7 +230,7 @@ does not avoid the disk and memory cost of generating a full VCD.
 
 ### Split long time ranges
 
-Inside a remote shell with tools loaded, set `wave_input` to the absolute path on `eda01`
+Inside a remote shell with tools loaded, set `wave_input` to the absolute path on the selected conversion host
 and export successive windows with the same signal selection:
 
 ```bash
@@ -244,10 +257,10 @@ concurrency only when server memory, storage, and load permit it.
 Check output size, free space, log tails, and your conversion process's PID, elapsed time, and RSS:
 
 ```bash
-ssh eda01 "du -h '$fsdb_remote_dir'"
-ssh eda01 "df -h '$fsdb_remote_dir'"
-ssh eda01 "tail -n 20 '$fsdb_remote_dir/focus-800-810.fsdb2vcd.log'"
-ssh eda01 'ps -u "$USER" -o pid,etime,pcpu,rss,args'
+ssh "$fsdb_host" "du -h '$fsdb_remote_dir'"
+ssh "$fsdb_host" "df -h '$fsdb_remote_dir'"
+ssh "$fsdb_host" "tail -n 20 '$fsdb_remote_dir/focus-800-810.fsdb2vcd.log'"
+ssh "$fsdb_host" 'ps -u "$USER" -o pid,etime,pcpu,rss,args'
 ```
 
 RSS is normally in KiB. VCD growth may reflect declaration or array expansion rather than
@@ -273,18 +286,18 @@ No download is needed:
 
 ### Outputs in remote-only scratch space
 
-Copy the completed FST and records. Leave the large intermediate VCD on `eda01`:
+Copy the completed FST and records. Leave the large intermediate VCD on the selected conversion host:
 
 ```bash
 fsdb_prefix=focus-800-810
 fsdb_local_export=/absolute/path/to/task/original/analysis/fsdb-export
 mkdir -p "$fsdb_local_export"
-scp "eda01:$fsdb_remote_dir/$fsdb_prefix.fst" "$fsdb_local_export/"
-scp "eda01:$fsdb_remote_dir/$fsdb_prefix.command.txt" \
-  "eda01:$fsdb_remote_dir/$fsdb_prefix.summary.txt" \
-  "eda01:$fsdb_remote_dir/$fsdb_prefix.fsdb2vcd.log" \
-  "eda01:$fsdb_remote_dir/$fsdb_prefix.vcd2fst.log" \
-  "eda01:$fsdb_remote_dir/$fsdb_prefix.SHA256SUMS" "$fsdb_local_export/"
+scp "${fsdb_host}:$fsdb_remote_dir/$fsdb_prefix.fst" "$fsdb_local_export/"
+scp "${fsdb_host}:$fsdb_remote_dir/$fsdb_prefix.command.txt" \
+  "${fsdb_host}:$fsdb_remote_dir/$fsdb_prefix.summary.txt" \
+  "${fsdb_host}:$fsdb_remote_dir/$fsdb_prefix.fsdb2vcd.log" \
+  "${fsdb_host}:$fsdb_remote_dir/$fsdb_prefix.vcd2fst.log" \
+  "${fsdb_host}:$fsdb_remote_dir/$fsdb_prefix.SHA256SUMS" "$fsdb_local_export/"
 (
     cd "$fsdb_local_export"
     sha256sum -c "$fsdb_prefix.SHA256SUMS"
@@ -305,7 +318,7 @@ selections, logs, and checksums so others can reproduce the extraction.
 | Symptom | What to check |
 | --- | --- |
 | `module not found` over SSH | Use a Bash login shell |
-| Input missing on eda01 | Check file permissions and whether the input is on shared NFS before copying |
+| Input missing on the conversion host | Check file permissions and whether the input is on shared NFS before copying |
 | Slow conversion or growing VCD/memory | Narrow time and scopes, reduce depth, exclude arrays |
 | Interfaces present but internal registers missing | Check hierarchy and depth of the target subtree |
 | Many apparent transitions at a segment's start | Check whether these are initial states |

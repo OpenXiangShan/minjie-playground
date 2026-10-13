@@ -2,7 +2,7 @@
 name: xiangshan-debug
 description: >-
   调试一个给定的 XiangShan 失败用例：分类、复现、定位并修复 stuck、liveness、difftest mismatch、assertion、bad trap 或 fatal 问题。
-  支持分析用户提供的 FSDB 现场，通过 eda01 的 Verdi 工具裁剪时间和信号并转为 VCD/FST。
+  支持分析用户提供的 FSDB 现场，使用当前环境可用的 Verdi 工具裁剪时间和信号并转为 VCD/FST。
   使用用户指定现场或任务目录内的日志和输入，从确认的官方 Git URL 获取指定 commit，构建带波形和 ChiselDB 的 Verilator emu，完成同一用例的修复和验证；任何情况下不构建、生成或运行 gsim emu。
 ---
 
@@ -24,7 +24,7 @@ description: >-
 
 ## 输入和上下文边界
 
-自动任务先读根目录的 `manifest.json`、`logs/` 和 `input/`。用户直接指定现场时，只从该现场补齐同样的元信息并写入 `execution.md`，不要求已有 manifest。确认报告名、workload、官方仓库 URL、branch、完整 commit、checkpoint、NEMU、原始 seed 和配置；源码从指定的官方 Git URL 获取，不依赖 monitor 的宿主机源码或 Git cache。
+自动任务先读根目录的 `manifest.json`、`logs/` 和 `input/`。用户直接指定现场时，只从该现场补齐同样的元信息并写入 `execution.md`，不要求已有 manifest。确认报告名、workload、官方仓库 URL、branch、完整 commit、checkpoint、NEMU、原始 seed 和配置；源码从指定的官方 Git URL 获取，并核对实际使用的 commit 和依赖版本。
 
 只使用当前任务提供的一个 workload 和它的错误日志。缺失的 checkpoint、NEMU、源码版本或日志必须在 `issues.md` 和分析报告中明确记录；不能用名称相似的文件代替。若原始日志已经包含 gsim 产物，只记录其来源，不把它作为本轮 emu。
 
@@ -49,7 +49,7 @@ description: >-
 
 1. 对 `logs/` 做初筛，再读取首错前后的原始上下文。主类型为 `stuck`、`liveness`、`mismatch`、`assertion`、`bad_trap` 或 `fatal`。
 2. 出现 `No instruction of core <id> commits for <cycles> cycles, maybe get stuck` 时，主类型必须是 `stuck`。REF 多执行一条指令后出现的 mismatch、`ABORT`、signal 或级联 assert 只能作为后续结果，不能覆盖首错。
-3. 在根目录写 `checkpoints.txt`，记录这个任务提供的 checkpoint；固定字段为名称、`error_instrCnt`、`error_cycle` 和绝对路径。assertion 没有指令数时使用 `40000000`，没有 cycle 时写 `unknown`，并明确这不是日志观测值。
+3. 在根目录写 `checkpoints.txt`，记录这个任务提供的 checkpoint；固定字段为名称、`error_instrCnt`、`error_cycle` 和绝对路径。日志没有指令数或 cycle 时，对应字段写 `unknown`；运行预算另行记录，不能填入错误位置字段。
 4. 在根目录写 `bug-analysis.md`，记录首错签名、粗分类、微架构归属、PC/cycle/instrCnt、expected/actual、输入摘要、版本和证据缺口。assertion 保留完整 message 与触发层级；mismatch 区分发现差异的 PC 与写入错误状态的 producer，不能把 ABORT PC 直接当成根因。
 5. 为 code owner 更新根目录 `README.md`，先给出当前状态、失败场景和下一步；流程结束后将它更新为最终摘要。
 
@@ -58,9 +58,9 @@ description: >-
 1. 使用基线 debug emu 和这一个 checkpoint。先查看 emu `--help` 和参数实现，使用原始 seed、NEMU 与匹配的运行配置；seed 缺失时显式记录选择，不能声称完整复刻原 CI。
 2. 首次尝试写入根目录 `reproduction/`。如果需要同一 checkpoint 的有限重试或同一输入的参数变体，才使用 `reproduction/candidates/<attempt-slug>/`；这只是一个失败用例的尝试记录，不是第二个 case。
 3. 日志、真实退出码和非空波形必须来自同一次 invocation，并核对本次首错签名和架构差异是否匹配。若当前版本支持 LightSSS，可用 `--enable-fork --fork-interval 60`；等待对应 child 完成写出再归档，不能选旧波形或仍在增长的文件。否则使用可验证的非 fork 波形参数。
-4. 有失败 `instrCnt` 时将 `-I` 至少设为 `instrCnt + 10000`；只有 cycle 时设置 `-C cycle + 10000`；assertion 缺少指令数时使用 `40000000 + 10000`。不能凭空伪造代表波形。
-5. 长时运行前记录预期执行范围和观察句柄。只有正常 limit 而无首错时，记为“未重现”；先检查配置、seed、后端和动态路径差异，只有新证据支持时才做一次有明确目标的参数重试。保留失败日志，不盲目扩到千万指令、反复减小余量或重跑相同命令。
-6. 按实际格式读取波形：VCD/FST 使用当前 Python 环境的 `pywellen`；FSDB 先按 [fsdb-waveform.md](references/fsdb-waveform.md) 在 eda01 检查共享存储、读取 summary，以明确时间单位和窄信号层级导出 VCD/FST，再用 `pywellen` 查询。核对 timescale、有效时间范围及 commit/clock 锚点后做窄因果窗口分析；基线复现的查询保存到 `reproduction/analysis/`，用户提供现场的查询保存到 `original/analysis/`。缺少现成索引不代表波形不可读。
+4. 根据已知首错位置和所需观察窗口选择 `-I` 或 `-C`。运行余量 `RUN_MARGIN` 可默认取 `10000`，并按用例调整；首错位置未知时，单独选择并记录运行预算，不推定错误指令数。不能凭空伪造代表波形。
+5. 长时运行前记录预期执行范围和观察句柄。只有正常 limit 而无首错时，记为“未重现”；先检查配置、seed、后端和动态路径差异，每次重试都应针对明确假设，记录参数差异、预期结果和停止条件。保留尝试日志，达到既定运行预算或没有新的调查依据时停止，避免无目的重复运行。
+6. 按实际格式读取波形：VCD/FST 使用当前 Python 环境的 `pywellen`；FSDB 先按 [fsdb-waveform.md](references/fsdb-waveform.md) 在当前环境选定的转换主机上检查共享存储、读取 summary，以明确时间单位和窄信号层级导出 VCD/FST，再用 `pywellen` 查询。核对 timescale、有效时间范围及 commit/clock 锚点后做窄因果窗口分析；基线复现的查询保存到 `reproduction/analysis/`，用户提供现场的查询保存到 `original/analysis/`。缺少现成索引不代表波形不可读。
 
 如果有依据的有限重试仍不能复现，记录“基线未重现”和每次参数差异，继续分析已有证据并列出下一步所缺的精确输入。仅靠静态分析提出的 patch 标为候选；修复版正常退出不能证明根因或完成修复，验证证据写入 `after-fix/validation/`。
 
@@ -69,12 +69,12 @@ description: >-
 ### 4. 隔离修复并回归
 
 1. 从记录的原始 commit 建立任务根目录的 `XiangShan/`，不要修改 `XiangShan-original/`。
-2. 从错误架构状态找到 producer，沿其实际生命周期定位“输入正确、输出首次错误”的阶段。记录时间、动态身份、有效信号、输入/输出、不变量及对应源码；检查 NEMU、checkpoint、配置、时间轴和信号误读等替代解释。方法见 [root-cause.md](references/root-cause.md)。
-3. 修复已被证据支持的不变量；最近 commit、容量调整或源码相似性只能提示调查方向，不能成为直接 revert 的理由。运行 `git diff --check` 并构建同配置 fixed emu，完整输出写入 `build-log/build-fixed.log`。
+2. 根据错误类型，沿相关指令、请求或状态的实际生命周期定位首次违反不变量或停止推进的位置；架构状态差异应回溯到 producer。记录时间、动态身份、有效信号、输入/输出、不变量及对应源码；检查 NEMU、checkpoint、配置、时间轴和信号误读等替代解释。方法见 [root-cause.md](references/root-cause.md)。
+3. 根据因果证据实施能解释首错的最小修复。运行 `git diff --check` 并构建同配置 fixed emu，完整输出写入 `build-log/build-fixed.log`。
 4. 将基于原始 commit 的 patch 写入 `patch/patch.diff`，将建议的 Git commit title/message 写入 `patch/message.txt`。修复后的 emu 以普通文件形式保存为 `after-fix/new-emu`，不能用会被后续构建改写的符号链接。
-5. 启用原 NEMU/difftest，运行同一 checkpoint、seed 和配置，结果写入 `after-fix/representative/`。必须实际越过原首错位置且没有原错误或新功能错误，并在完整运行日志中确认所有已提交指令没有架构状态 mismatch；记录终止原因和实际计数，正常 limit 只证明这个已执行范围。
+5. 启用原 NEMU/difftest，运行同一 checkpoint、seed 和配置，结果写入 `after-fix/representative/`。首错位置已知时须实际越过该位置，且没有原错误或新功能错误，并在完整运行日志中确认所有已提交指令没有架构状态 mismatch；记录终止原因和实际计数，正常 limit 只证明这个已执行范围。
 6. 用定点波形、cover print、计数器或等价观测证明已证实的触发条件在 fixed 中命中，且输出满足不变量。观测不足时可增加验证 instrumentation，单独归档其 diff 和二进制身份；未命中条件时写“验证不足”，不能只凭无报错宣称修复。
-7. 交付前用独立的证据清单重新核对首错、producer、波形窗口、patch 基准、同次运行关系和 fixed 结果，更新两个报告及 README。未完成项明确记录 blocker 和继续所需输入。
+7. 交付前用独立的证据清单重新核对首错、相关动态对象、波形窗口、patch 基准、同次运行关系和 fixed 结果，更新两个报告及 README。未完成项明确记录 blocker 和继续所需输入。
 
 ## 交付契约
 
@@ -108,7 +108,7 @@ description: >-
 ## 操作边界
 
 - 默认不执行 `git commit`，绝不执行 `git push`。
-- 源码仓库、branch 和 commit 以 manifest 或用户指定现场中已核实的元信息为准；monitor 不把宿主机本地 XiangShan/NEMU/Git cache 路径写入 manifest，源码获取由任务自身完成。
+- 源码仓库、branch 和 commit 以 manifest 或用户指定现场中已核实的元信息为准，并记录实际源码来源和版本。
 - Python 使用当前项目或用户配置的环境，不在 skill 中假设固定虚拟环境路径。
 - 清理前确认不会删除用户改动、唯一波形或失败现场。
 - PR、trigger 和 Actions 产物关联见 [github-actions.md](references/github-actions.md)；PC 与 ELF 映射见 [disassembly.md](references/disassembly.md)。

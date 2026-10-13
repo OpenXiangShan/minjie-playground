@@ -1,6 +1,6 @@
 # XiangShan 波形分析 Workflow
 
-本文件负责分析已经存在的波形，不负责运行仿真。先按格式选择读取方法：VCD/FST 直接使用 `pywellen`；FSDB 先读取 [fsdb-waveform.md](fsdb-waveform.md)，通过 eda01 的 Verdi 工具按时间窗口和信号层级导出 VCD/FST，再继续本文件的查询流程。`pywellen` 不直接读取 FSDB。默认示例使用 VCD，执行时按实际文件路径设置 `WAVE`。关联波形、日志和 XiangShan 源码时核对同一 commit/config；不使用 gsim 生成或运行波形。
+本文件负责分析已经存在的波形，不负责运行仿真。先按格式选择读取方法：VCD/FST 直接使用 `pywellen`；FSDB 先读取 [fsdb-waveform.md](fsdb-waveform.md)，使用当前环境可用的 Verdi 工具按时间窗口和信号层级导出 VCD/FST，再继续本文件的查询流程。`pywellen` 不直接读取 FSDB。默认示例使用 VCD，执行时按实际文件路径设置 `WAVE`。关联波形、日志和 XiangShan 源码时核对同一 commit/config；不使用 gsim 生成或运行波形。
 
 基线复现波形由复现运行步骤产生，用户提供的 FSDB 及其导出波形属于原始现场证据；保存位置和初始/修复版本边界以 [SKILL.md](../SKILL.md) 与 [reproduction-delivery.md](reproduction-delivery.md) 为准。以下 VCD/FST 查询直接调用当前 Python 环境中的 `pywellen`，不依赖额外的波形 CLI、缓存层、RTL parser 或 bundled runtime。
 
@@ -46,19 +46,22 @@ PY
 
 `pywellen.Waveform` 根据扩展名和文件内容读取 VCD/FST。大型 XiangShan 波形可能包含数百万个变量；不要把完整 `wave.all_vars()` 结果另存为列表/集合或回显到上下文。一次遍历只按当前错误的模块、字段和后缀筛选，保存小型候选集、扫描总数和是否截断。没有现成索引不等于波形不可读；只有窄过滤确实无法定位且记录了原因时，才逐步放宽关键词。
 
-下面的代码只使用 `pywellen` 和 Python 标准库，不需要当前 skill 的辅助脚本。先根据日志和源码把 `TOKENS` 改成当前问题所需的最小集合；`MAX_MATCHES` 是防止候选输出失控的硬上限：
+下面的代码只使用 `pywellen` 和 Python 标准库，不需要当前 skill 的辅助脚本。先根据日志和源码，将目标模块或字段的关键词以逗号分隔写入 `SIGNAL_TOKENS`；`MAX_MATCHES` 是防止候选输出失控的硬上限：
 
 ```bash
 WAVE=/absolute/path/to/reproduction/wave.vcd
 ANALYSIS=/absolute/path/to/reproduction/analysis
 mkdir -p "$ANALYSIS"
 
-WAVE="$WAVE" OUT="$ANALYSIS/signal-candidates.txt" python3 - <<'PY'
+: "${SIGNAL_TOKENS:?Set comma-separated keywords for the target module or fields}"
+WAVE="$WAVE" SIGNAL_TOKENS="$SIGNAL_TOKENS" OUT="$ANALYSIS/signal-candidates.txt" python3 - <<'PY'
 import os
 from pathlib import Path
 import pywellen
 
-TOKENS = ("decode", "commit", "illegal", "trapinstinfo")
+TOKENS = tuple(token.strip().lower() for token in os.environ["SIGNAL_TOKENS"].split(",") if token.strip())
+if not TOKENS:
+    raise SystemExit("SIGNAL_TOKENS must contain at least one keyword")
 MAX_MATCHES = 5000
 wave = pywellen.Waveform(
     path=os.environ["WAVE"],
@@ -188,8 +191,6 @@ PY
 - cache/访存：地址、opcode、source/transaction ID、MSHR/queue 状态和每个通道的 handshake。
 - assertion：触发 entry 的 valid、分配/释放、arbiter chosen、timer、backpressure 和断言 enable。
 - difftest mismatch：commit PC/instruction、写回寄存器/值、异常和 redirect。
-
-对访存顺序和 redirect 竞争，优先同时筛选 `LoadQueueRAW`/LSQ rollback、各 `LoadUnit` rollback、backend `memoryViolation`、redirect target/level、ROB/FTQ 和 commit。若两个请求同一 ROB，比较 `flushAfter`/`flush` 强度以及 `stFtq` 等来源元数据，并核对 backend 输出是否完整地来自强请求；不能只看一个 `level` 字段。
 
 结论必须区分 `波形事实`、`源码推断`、`候选根因` 和 `已验证修复`。如果基准 Verilator 没有重演旧错误，只能报告“未重现/证据不足”，不能把修复版正常退出当成根因证明。
 

@@ -74,8 +74,8 @@ README 是 code owner 的快速入口，不替代 `bug-analysis.md`，也不复�
 
 ```text
 # checkpoint_name<TAB>error_instrCnt<TAB>error_cycle<TAB>checkpoint_path
-# assertion 没有指令数时固定使用 40000000，并在 bug-analysis.md 说明这是默认回退值。
-<name>	<instrCnt>	<cycle-or-unknown>	<absolute-checkpoint-path>
+# 日志缺失的指令数或周期数写 unknown；运行预算单独记录在 execution.md。
+<name>	<instrCnt-or-unknown>	<cycle-or-unknown>	<absolute-checkpoint-path>
 ```
 
 不能根据 cycle 和 `instrCnt` 互相换算，也不能删除任务提供的 checkpoint 记录来伪造代表点。
@@ -150,7 +150,7 @@ README 是 code owner 的快速入口，不替代 `bug-analysis.md`，也不复�
 - checkpoint 大文件只在 `bug-analysis.md` 和 `checkpoints.txt` 记录、验证和引用，不复制到任务目录。
 - `patch.diff` 必须基于记录的原始 commit 生成；主仓和 submodule 有改动时分别保存 patch，并在 `message.txt` 记录应用顺序。
 - stdout/stderr 保持原样；摘要、行号和结论写入 Markdown 文档。
-- FSDB 原始输入保留现场路径和身份记录；先检查 eda01 的共享 NFS 访问，仅在不可访问时复制。已有现场的完成导出和转换记录保存在 `original/analysis/fsdb-export/`；远端 scratch 路径写入 `execution.md`，大型中间 VCD 可留在远端。基线或修复运行的转换结果保存在对应运行目录的 `analysis/`，原始现场转换不能记为本轮复现成功。详见 [fsdb-waveform.md](fsdb-waveform.md)。
+- FSDB 原始输入保留现场路径和身份记录；先检查选定转换主机的共享存储访问，仅在不可访问时复制。已有现场的完成导出和转换记录保存在 `original/analysis/fsdb-export/`；远端 scratch 路径写入 `execution.md`，大型中间 VCD 可留在远端。基线或修复运行的转换结果保存在对应运行目录的 `analysis/`，原始现场转换不能记为本轮复现成功。详见 [fsdb-waveform.md](fsdb-waveform.md)。
 - 如果初始 emu 无法复现，保留同一 checkpoint 的实际尝试日志，不生成代表波形，并把修复后验证写入 `after-fix/validation/`。
 - 修复验证只运行这个 checkpoint；不把其他 workload、checkpoint 或“追加回归”写入本任务。
 
