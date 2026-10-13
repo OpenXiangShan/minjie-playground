@@ -17,9 +17,9 @@ CHECKPOINT_ROOT/
 
 
 
-举例：`/nfs/home/share/checkpoints_profiles/spec06_gcc16_rva23_novec_260820/checkpoint/astar_biglakes/10149/_10149_0.029776_memory_.zstd`
+举例：`CHECKPOINT_ROOT/spec06_gcc16_rva23_novec_260820/checkpoint/astar_biglakes/10149/_10149_0.029776_memory_.zstd`
 其中：
-CHECKPOINT_ROOT: /nfs/home/share/checkpoints_profiles
+CHECKPOINT_ROOT: <checkpoint-root>
 <chekpoint-version>: spec06_gcc16_rva23_novec_260820
 subbenchmark: astar_biglakes
 instance: 10149
@@ -36,9 +36,9 @@ find "$CHECKPOINT_ROOT" -type f \
 ```
 
 SPEC17的例子：
- /nfs/home/share/checkpoints_profiles/spec17_rate_gcc16_rva23_novec_260904/checkpoint/500.perlbench_rate_refrate_00_checkspam.2500.5.25.11.150.1.1.1.1/11075/_11075_0.044852_memory_.zstd
+ CHECKPOINT_ROOT/spec17_rate_gcc16_rva23_novec_260904/checkpoint/<workload>/<checkpoint>_memory_.zstd
  和
- /nfs/home/share/checkpoints_profiles/spec17_gcc16_rva23_novec_2harts_260911/checkpoint/bwaves_rate_refrate_00_bwaves_1/10017/_10017_0.0026158.gz
+ CHECKPOINT_ROOT/spec17_gcc16_rva23_novec_2harts_260911/checkpoint/<workload>/<checkpoint>_memory_.gz
 
 
 文件 CHECKPOINT_ROOT/<chekpoint-version>/checkpoint/checkpoint.lst 中记录了<checkpoint-version>的`检查点列表`：

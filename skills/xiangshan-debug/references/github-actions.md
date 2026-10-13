@@ -2,15 +2,15 @@
 
 ## 何时解析远端链接
 
-先检查用户提供的本地运行记录、日志目录、本地源码路径和显式 commit。只要本地信息已经能定位本轮日志并确定 XiangShan commit，就直接使用本地信息，不请求 GitHub API，也不解析同时给出的 PR、trigger 或 Actions run 链接。
+先检查任务运行记录、日志和显式 commit。XiangShan 源码从官方仓库直接获取。只要任务日志已经能定位本轮日志并确定 commit，就不需要请求 GitHub API，也不解析同时给出的 PR、trigger 或 Actions run 链接。
 
 运行目录名常同时携带归档日期、短 commit 和配置。例如：
 
 ```text
-/nfs/home/cirunner/perf-report/cr260917-c8d7b3a5c-DefaultConfig
+PERF_REPORT_ROOT/cr260917-c8d7b3a5c-DefaultConfig
 ```
 
-该路径既是应优先检查的本地运行记录目录，也给出候选短 commit `c8d7b3a5c`。从用户指定仓库或默认的 `https://github.com/OpenXiangShan/XiangShan.git` 准备源码后，将短 commit 解析为唯一完整 commit 并记录。如果目录名没有 commit，或者没有提供本地日志目录，才解析远端链接以补齐对应缺失项。
+该路径只作为任务日志命名格式示例，也给出候选短 commit `c8d7b3a5c`。从默认的 `https://github.com/OpenXiangShan/XiangShan.git` 准备源码后，将短 commit 解析为唯一完整 commit 并记录。如果目录名没有 commit，才解析远端链接以补齐对应缺失项。
 
 ## 链接解析目标
 
