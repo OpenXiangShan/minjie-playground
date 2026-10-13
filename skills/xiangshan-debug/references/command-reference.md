@@ -4,6 +4,10 @@
 
 本技能只生成和运行 Verilator emu。任何情况下不得构建、生成或运行 gsim emu；如果输入归档中已有 gsim，只记录其来源，不将其作为本轮 debug、reproduction 或 after-fix emu。
 
+构建日志可以记录必要的环境键名，但不得原样记录凭据。对 `GITHUB_TOKEN`、`*_API_KEY`、`*_SECRET`、`*_PASSWORD`、webhook、cookie、授权头等值统一写成 `[REDACTED]`；不要直接把 `env` 输出到任务日志。
+
+开始大规模编译前，先从任务 `logs/` 提取原始模拟器实际使用的依赖和配置（例如 `DRAMSIM3 config`、`DRAMSIM3_HOME`、Constantin、ChiselDB）。逐项检查路径、工具和源码接口；缺失时先记录 blocker，不能用未匹配的默认配置做一轮昂贵构建后再补开关。
+
 ## 日志初筛
 
 ```bash
@@ -19,11 +23,16 @@ rg -n -i 'different at pc|mismatch|assert|abort|bad trap|leak|fatal|core .*instr
 
 ## Verilator 调试 emu
 
-任务级先创建与 `cases/` 同级的 `XiangShan-original/`，从该目录只构建一份共享调试 emu；所有类别的复现候选和最终代表都使用这份 emu。每个类别现场仍创建 `build-log/`，所有构建命令的 stdout/stderr 都写入该目录。调试 emu 使用 `build-debug.log`（共享构建日志的现场副本），修复后 emu 使用 `build-fixed.log`；多个配置或 submodule 使用附加 slug 区分，不能把 build log 写在类别目录根部。
+任务级在当前任务根目录创建 `XiangShan-original/`，检出确认的 commit 后先执行标准 `make init`，核对依赖完整后冻结源码，从该目录只构建一份共享调试 emu；这个失败用例的所有复现候选和最终代表都使用这份 emu。构建日志统一写入任务根目录的 `build-log/`。调试 emu 使用 `build-debug.log`（共享构建日志的现场副本），修复后 emu 使用 `build-fixed.log`；多个配置或 submodule 使用附加 slug 区分，不能把 build log 写在任务根目录之外。
 
 ```bash
 export NOOP_HOME=/absolute/path/to/task/XiangShan-original
-: "${BUILD_LOG_DIR:=/path/to/case/build-log}"
+mkdir -p original
+make -C "$NOOP_HOME" init >original/source-init.log 2>&1
+INIT_STATUS=$?
+printf '%s\n' "$INIT_STATUS" >original/source-init.exit-code
+test "$INIT_STATUS" -eq 0 || exit "$INIT_STATUS"
+: "${BUILD_LOG_DIR:=/path/to/task/build-log}"
 : "${BUILD_JOBS:?Set BUILD_JOBS for this host}"
 mkdir -p "$BUILD_LOG_DIR"
 make -C "$NOOP_HOME" emu EMU_TRACE=1 WITH_CHISELDB=1 -j"$BUILD_JOBS" \
@@ -39,7 +48,7 @@ sha256sum "$EMU_REAL"
 "$EMU_REAL" --help
 ```
 
-修复后构建使用同样的命令和环境，但先将 `NOOP_HOME` 切换为对应类别的私有 `/path/to/case/XiangShan/`，再将完整 stdout/stderr 写入 `"$BUILD_LOG_DIR/build-fixed.log"`；不要覆盖 `build-debug.log`，也不要修改任务级 `XiangShan-original/`。
+修复后构建使用同样的命令和环境，但先将 `NOOP_HOME` 切换为任务根目录的私有 `/path/to/task/XiangShan/`，再将完整 stdout/stderr 写入 `"$BUILD_LOG_DIR/build-fixed.log"`；不要覆盖 `build-debug.log`，也不要修改任务级 `XiangShan-original/`。
 
 按源码实际接口追加 `CONFIG`、`WITH_DRAMSIM3`、线程等参数。若当前版本的 ChiselDB 变量不同，使用源码定义的名称；不要照搬模板中的变量。
 
@@ -65,7 +74,8 @@ set -u
 : "${FAILURE_INSTR:?Set FAILURE_INSTR to the original failure instrCnt; use 40000000 for assertion logs without instrCnt}"
 : "${RUN_DIR:?Set RUN_DIR to this run's artifact directory}"
 
-RUN_LIMIT=$((FAILURE_INSTR + 10000))
+RUN_MARGIN=${RUN_MARGIN:-10000}
+RUN_LIMIT=$((FAILURE_INSTR + RUN_MARGIN))
 mkdir -p "$RUN_DIR"
 "$EMU" -i "$CHECKPOINT" \
   --diff "$NEMU" \
@@ -77,9 +87,13 @@ printf 'emu exit code: %s\n' "$EMU_STATUS"
 exit "$EMU_STATUS"
 ```
 
-每个并发运行使用不同的 `RUN_DIR` 和运行时模型输出目录。参数名称以当前 emu `--help` 和参数实现为准；外层 `timeout` 只用于明确标注的 smoke。
+这一个用例一次只启动一个 emu invocation，并为它设置独立的 `RUN_DIR` 和运行时模型输出目录。参数名称、fork 行为与终止消息以当前 emu `--help` 和参数实现为准；外层 `timeout` 只用于明确标注的 smoke。部分版本在参数解析后会关闭 parent 的常规 waveform，但在失败时由 `fork_child_init()` 唤醒 child、强制开启波形；这种实现仍可使用 `--enable-fork`，前提是实际生成非空波形，并把同一次 invocation 的 parent/child 日志、退出状态和真实波形路径一起固化。若当前版本没有该 child 波形机制，再使用可验证的非 fork 带波形运行。
 
-初始版本复现时，先把 `RUN_DIR` 设为 `reproduction/candidates/<checkpoint-slug>/` 运行预选 checkpoint；只有该候选稳定复现首错，才将其日志和波形固化到 `reproduction/` 根部。候选不能复现时按记录顺序继续运行同类失败 checkpoint，包含首个候选最多 5 个；全部失败时保留候选日志，不生成代表波形，并在修复后使用 `after-fix/validation/<checkpoint-slug>/` 保存基于日志和源码的回归验证。
+如果这一个 checkpoint 需要重试，使用 `reproduction/candidates/<attempt-slug>/` 记录每次有明确目的的参数变化；不能把其他 checkpoint 当成替代代表，也不能并发启动多个相同用例来碰运气。每次结束后保留 stdout/stderr 和退出码，只有日志首错匹配且波形已写完，才把该次证据提升到 `reproduction/` 根部。仍不能复现时保留尝试并明确证据缺口，不生成空波形。
+
+仿真输出必须直接流式写入文件；不要在 Python `PIPE` 中积攒数 GB 的 stdout/stderr。父进程退出后，在限定等待窗口内轮询本次 `RUN_DIR` 的 `build`/波形目录，且只选择本次 invocation 新生成的非空 FST/VCD。不要递归扫描整个源码树，也不要使用其他任务的缓存波形。归档前将 `build/emu` 等绝对路径符号链接解析为任务目录内的普通文件，并记录二进制 sha256。
+
+`RUN_MARGIN` 是运行上限余量，不是新的错误位置。先使用小而明确的余量（通常 `10000`），若日志显示 limit 早于首错，只能根据该差异做一次有记录的调整；无论如何，必须保存实际 `-I/-C`、退出原因和观测到的最大指令数。正常达到 limit 且未出现首错只能判为“未重现”。
 
 主错误类型为 `assertion` 且原始日志没有出错节点的 `instrCnt` 时，调用包装脚本前设置 `FAILURE_INSTR=40000000`；对应 `checkpoints.txt` 的 `error_instrCnt` 写入 `40000000`。如果 cycle 也缺失，`error_cycle` 写入 `unknown`；并在 `bug-analysis.md`、`execution.md` 中说明该指令数是默认回退值，不是日志观测值。
 
@@ -89,7 +103,7 @@ exit "$EMU_STATUS"
 : "${BASE_COMMIT:?Set BASE_COMMIT to the recorded original commit}"
 git -C /path/to/case/XiangShan diff --check
 git -C /path/to/case/XiangShan diff --binary "$BASE_COMMIT" -- \
-  > /path/to/case/patch/patch.diff
+  > /path/to/task/patch/patch.diff
 ```
 
 主仓和 submodule 有改动时分别在各自仓库执行，并在 `message.txt` 记录 patch 应用顺序。
