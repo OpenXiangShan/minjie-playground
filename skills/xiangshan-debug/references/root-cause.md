@@ -1,46 +1,57 @@
-# 根因定位与修复验证
+# Root-Cause Analysis and Fix Validation
 
-本文件用于一个失败用例的根因分析。根据错误类型沿相关指令、请求或状态追踪，定位最早违反不变量或停止推进的位置，并用实际证据验证修复。
+Use this reference to identify the earliest causal failure and validate the smallest fix. Follow the
+relevant instruction, request, or state; do not force every failure through the same pipeline.
 
-## 1. 固定首错与调查对象
+## 1. Record the first error and relevant state
 
-保存同一次运行中的相关证据：
+Preserve evidence from the same run:
 
-- 首错签名和完整错误文本，以及已观测到的 PC、指令、提交计数、cycle、expected/actual；不适用或缺失的字段明确标注。
-- 与首错相关的动态对象和状态：架构差异可使用提交记录，stuck/liveness 可使用阻塞指令、请求或资源状态，assertion 使用触发条件及相关状态，fatal 使用宿主异常、调用栈和依赖信息。
-- seed、checkpoint、配置、reference model 和 emu 的身份。
+- the first-error signature and full text, with observed PC, instruction, count, cycle, expected value,
+  and actual value when applicable;
+- the dynamic object and state relevant to the failure: commit records for architectural mismatches,
+  blocked instructions or resources for stuck/liveness, assertion context for protocol failures, and
+  host exception or stack information for fatal errors;
+- seed, checkpoint, configuration, reference model, and emu identity.
 
-对于架构状态差异，报告中的 `ABORT` 或 mismatch PC 可能只是发现差异的边界，应沿错误寄存器或内存状态回溯到真正写入它的 producer。结合相关日志、波形和源码确认动态身份，commit trace 与匹配反汇编按需使用。
+An `ABORT` or mismatch PC may only identify where the difference was detected. For an architectural
+mismatch, trace the wrong register or memory value back to the producer using the relevant log,
+waveform, and source. Use commit traces and matching disassembly when they are relevant.
 
-## 2. 沿相关生命周期追踪
+## 2. Follow the relevant lifetime
 
-根据首错和实际因果路径选择相关阶段；不要求每个问题都遍历完整流水线。按需核对时间、动态身份、有效或使能信号、handshake、关键输入输出及状态转移，找到首次偏离预期行为的位置。
+Select the stages required by the observed causal path. Record time, dynamic identity, valid or enable
+state, handshakes, key inputs and outputs, and state transitions. Find the first point at which the
+expected invariant or progress condition is lost.
 
-结论按以下四类标记：
+Label conclusions as:
 
-- `波形事实`：波形或日志直接给出的值；
-- `源码语义`：同一 commit 的 Chisel/RTL 对字段含义的解释；
-- `候选根因`：仍有替代解释的推断；
-- `已验证根因`：已经能解释首错并由修复验证覆盖的条件。
+- **Waveform fact**: directly shown by a waveform or log.
+- **Source meaning**: the field or signal meaning established from the matching Chisel/RTL source.
+- **Candidate cause**: an inference with alternatives still open.
+- **Verified cause**: explains the first error and is covered by the fixed-run evidence.
 
-## 3. 排除替代解释
+## 3. Exclude alternative explanations
 
-核对与当前调查有关的输入和证据：
+Check the inputs and evidence relevant to this failure:
 
-1. checkpoint、ELF、NEMU 和 seed 是否匹配；
-2. waveform、RTL、源码 commit、生成物和配置是否一致；
-3. 错误之前是否已有独立 mismatch、assertion 或 limit；
-4. 波形时间轴是否与 difftest `cycleCnt` 同一基准；fork/checkpoint 波形的时间不能直接当作日志 cycle；
-5. signal path、bit width、valid/ready 语义是否经过源码核对。
+1. checkpoint, ELF, NEMU, and seed identity;
+2. waveform, RTL, source commit, generated artifacts, and configuration;
+3. any earlier independent mismatch, assertion, or limit;
+4. waveform time origin versus difftest `cycleCnt`, especially after a fork or checkpoint;
+5. signal path, width, and valid/ready semantics against source.
 
-关键证据无法核对时，把结论写成“证据不足”，不要把相似 PC、统计计数或修复版正常退出升级为确定根因。
+If a key check cannot be completed, report “insufficient evidence.” Do not promote a similar PC,
+statistical coincidence, or normal fixed exit to a root-cause conclusion.
 
-## 4. 最小修复与条件覆盖
+## 4. Minimal fix and condition coverage
 
-根据因果证据实施能解释首错的最小修复，保留基线源码只读。fixed 版本除同一 checkpoint 的 difftest 回归外，应提供至少一种直接条件证据：定点波形、cover print、计数器、断言或等价观测。证据要回答：
+Apply only a fix supported by causal evidence and keep the baseline read-only. Besides running difftest
+on the same checkpoint, provide at least one direct observation: a focused waveform, cover point, counter,
+assertion, or equivalent. It must show that the original trigger occurs in the fixed run and that the
+fixed behavior satisfies the invariant.
 
-1. 原始触发条件确实在 fixed 运行中出现；
-2. fixed 行为满足预期不变量；
-3. 首错位置已知时已实际越过该位置，已执行范围内没有原错误或新功能错误，所有已提交指令没有架构状态 mismatch。
-
-若触发条件没有命中，写“验证不足/未完成”。正常达到 limit 时，若已越过已知首错位置、覆盖触发条件且 difftest 没有差异，可以记录“已执行范围内验证通过”，同时注明上限、实际计数和终止原因；不能据此宣称完整 workload 通过。
+When the first-error position is known, the fixed run must go beyond it without the original or a new
+functional error. If the run reaches its limit after the trigger is covered and difftest is clean, report
+"validated over the executed range," including the limit and termination reason; do not claim coverage of
+the full workload. If the trigger is not observed, report "insufficient validation."
