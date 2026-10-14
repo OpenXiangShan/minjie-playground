@@ -1,4 +1,4 @@
 interface:
-  display_name: "XiangShan 调试"
-  short_description: "分析 FSDB/VCD/FST 波形，复现并修复 XiangShan 错误"
-  default_prompt: "使用 $xiangshan-debug 处理用户现场或 manifest 指定的一个失败用例，按需裁剪转换 FSDB，构建带波形和 ChiselDB 的 Verilator emu，复现、定位、修复并验证；所有产物直接写入任务根目录。"
+  display_name: "XiangShan Debugging"
+  short_description: "Reproduce, analyze, and fix one XiangShan failure"
+  default_prompt: "Use $xiangshan-debug to reproduce, diagnose, and fix one XiangShan failure, analyze VCD/FST or supplied FSDB, validate the same checkpoint, and save artifacts in the task root."
