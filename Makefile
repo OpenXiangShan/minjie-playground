@@ -71,6 +71,8 @@ REMOTE_DIR ?= $(ROOT_DIR)
 REMOTE_ENV ?= source ~/.bash_profile &&
 SSH ?= ssh
 FPGA_HOST ?=
+FPGA_COMPUTE_HOST ?= $(FPGA_HOST)
+FPGA_RELAY = $(filter-out $(FPGA_COMPUTE_HOST),$(FPGA_HOST))
 FPGA_RUNTIME ?= $(FPGA_HOST)
 
 FPGA_DIFF_HOME := $(ROOT_DIR)/env-scripts/fpga_diff
@@ -192,7 +194,7 @@ help:
 	@printf '%s\n' 'Vector DiffTest is enabled by default; set DIFFTEST_EXCLUDE=Vec for a no-vector build.'
 	@printf '%s\n' 'Set DIFF=/path/to/nemu-so for diff mode; leave DIFF empty for --no-diff.'
 	@printf '%s\n' 'Set FPGA_BACKEND=uvhs to use the UVHS compile, runtime, memory, reset, and ILA paths.'
-	@printf '%s\n' 'Set FPGA_HOST and optionally FPGA_RUNTIME.'
+	@printf '%s\n' 'Set FPGA_HOST, optionally FPGA_COMPUTE_HOST and FPGA_RUNTIME.'
 	@printf '%s\n' 'Use FPGA_KEEP_RUNTIME=1 for consecutive runs.'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Set FPGA_BUILD_REMOTE for an NFS build host; set REMOTE_DIR for FPGA hosts.'
@@ -410,17 +412,19 @@ run_host:
 	@run_log="$(RUN_LOG)"; mkdir -p "$$(dirname "$$run_log")"; \
 	exec > >(setsid tee "$$run_log") 2>&1; \
 	host_status=0; runtime_status=0; \
-	$(call remote,$(FPGA_HOST),$(REMOTE_DIR),\
+	$(call remote,$(FPGA_COMPUTE_HOST),$(REMOTE_DIR),\
 		fpga_bit_home=$(call abs_path,$(FPGA_BIT_HOME)); \
 		workload_home=$(call abs_path,$(WORKLOAD)); \
 		workload_bin=$$(find "$$workload_home" -maxdepth 1 -type f -name "*.bin" -print -quit); \
 		workload_txt=$$(find "$$workload_home" -maxdepth 1 -type f -name "*.txt" -print -quit); \
 		host=$(if $(strip $(HOST)),$(call abs_path,$(HOST)),); \
 		test -n "$$host" || host=$$(find "$$fpga_bit_home" -type f -path "*/build/fpga-host" -print -quit); \
-		host_env=$$($(MAKE) -s -C env-scripts/fpga_diff host_env \
+		host_env=$$($(MAKE) -s -C env-scripts/fpga_diff \
+			$(if $(FPGA_RELAY),relay_host_env,host_env) \
 			FPGA_BACKEND=$(FPGA_BACKEND) CPU=$(CPU) SUFFIX="$(SUFFIX)" \
 			NO_DIFF=$(NO_DIFF) BIND_UART=$(BIND_UART) REMOTE_ENV="$(REMOTE_ENV)" \
 			FPGA_RUNTIME="$(if $(filter $(FPGA_HOST),$(FPGA_RUNTIME)),,$(FPGA_RUNTIME))" \
+			$(if $(FPGA_RELAY),XDMA_RELAY_BOARD="$(FPGA_HOST)") \
 			WORKLOAD="$$workload_txt") || exit $$?; \
 		eval "$$host_env"; \
 		trap "$${FPGA_HOST_CLEANUP_CMD:-:}" 0; \
