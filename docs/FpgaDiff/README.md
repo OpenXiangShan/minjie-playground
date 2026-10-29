@@ -5,7 +5,7 @@ This directory contains the FPGA DiffTest workflow and guides for `minjie-playgr
 ## Flow Overview
 
 ```text
-XiangShan / NutShell Verilog
+XiangShan / NutShell / BOOM Verilog
   -> top-level difftest generates release / fpga-host
   -> env-scripts/fpga_diff generates Vivado bitstream
   -> NEMU generates reference SO
