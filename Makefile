@@ -149,7 +149,7 @@ WORKLOAD_AM_BIN_DIR := $(WORKLOAD_HOME)/build/am-workloads/$(WORKLOAD_NAME)/pack
 WORKLOAD_OUT_DIR ?= $(READY_TO_RUN_DIR)/$(WORKLOAD_TAG)
 WORKLOAD_OUT_BIN ?= $(WORKLOAD_OUT_DIR)/$(WORKLOAD_TAG).bin
 WORKLOAD_OUT_TXT ?= $(WORKLOAD_OUT_DIR)/$(WORKLOAD_TAG).txt
-WORKLOAD_DTB ?= xiangshan-fpga-AIA-mem16g.dtb
+WORKLOAD_DTB ?= $(if $(filter boom,$(DESIGN)),boom-fpga-mem2g.dtb,xiangshan-fpga-AIA-mem16g.dtb)
 BIN2DDR_ARGS ?=
 
 # AM workload: select ARCH and CPPFLAGS based on DESIGN
@@ -188,7 +188,7 @@ help:
 	@printf '%s\n' '  make run_host FPGA_BIT_HOME=... WORKLOAD=<workload-dir> [HOST=...] [DIFF=/path/to/nemu-so]'
 	@printf '%s\n' ''
 	@printf '%s\n' 'run_host auto-finds fpga-host under FPGA_BIT_HOME and .bin/.txt under WORKLOAD.'
-	@printf '%s\n' 'Set WORKLOAD_DTB=<dtb-name> to override the default Linux DTB splice before Bin2ddr.'
+	@printf '%s\n' 'Set WORKLOAD_DTB=<dtb-name> to select the Linux DTB packed by workload-builder.'
 	@printf '%s\n' 'Vector DiffTest is enabled by default; set DIFFTEST_EXCLUDE=Vec for a no-vector build.'
 	@printf '%s\n' 'Set DIFF=/path/to/nemu-so for diff mode; leave DIFF empty for --no-diff.'
 	@printf '%s\n' 'Set FPGA_BACKEND=uvhs to use the UVHS compile, runtime, memory, reset, and ILA paths.'
@@ -361,6 +361,11 @@ ila_clear:
 
 workload:
 	$(call require_design)
+ifeq ($(DESIGN),boom)
+ifneq ($(WORKLOAD_TYPE),linux)
+	@echo "ERROR: BOOM workloads currently require TARGET=linux/<name>"; exit 1
+endif
+endif
 	mkdir -p "$(WORKLOAD_OUT_DIR)" $(dir $(WORKLOAD_LOG))
 	set -o pipefail; \
 	if [ "$(WORKLOAD_TYPE)" = "am" ]; then \
@@ -375,13 +380,6 @@ workload:
 	fi; \
 	test -n "$$src" && test -f "$$src" || { echo "ERROR: workload binary not found. Set WORKLOAD_BIN=..."; exit 1; }; \
 	cp "$$src" $(WORKLOAD_OUT_BIN) 2>&1 | tee -a $(WORKLOAD_LOG)
-	set -o pipefail; \
-	if [ "$(WORKLOAD_TYPE)" = "linux" ]; then \
-		dtb="$(WORKLOAD_HOME)/build/linux-workloads/$(WORKLOAD_NAME)/dt/$(WORKLOAD_DTB)"; \
-		test -f "$$dtb" || { echo "ERROR: workload dtb not found: $$dtb"; exit 1; }; \
-		dd conv=notrunc bs=1024 seek=1536 if="$$dtb" of="$(WORKLOAD_OUT_BIN)" \
-			2>&1 | tee -a $(WORKLOAD_LOG); \
-	fi
 	set -o pipefail; $(MAKE) -C $(BIN2DDR_HOME) FPGA=1 2>&1 | tee -a $(WORKLOAD_LOG)
 	set -o pipefail; \
 	$(BIN2DDR_HOME)/bin2ddr -i $(WORKLOAD_OUT_BIN) -o $(WORKLOAD_OUT_TXT) \

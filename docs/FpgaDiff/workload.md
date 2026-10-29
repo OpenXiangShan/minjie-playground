@@ -68,12 +68,14 @@ The assembled firmware image contains:
 Offset        Component
 ──────────    ─────────────────
 0x0           GCPT bootloader
-+1536 KB      Device tree blob (.dtb)
 +1024 KB      OpenSBI (fw_jump)
-+2 MB         Linux kernel + initramfs
++2 MB         Device tree blob (.dtb)
++4 MB         Linux kernel, followed by aligned initramfs
 ```
 
 The assembly is performed by `workload-builder/scripts/build-firmware-linux.sh`.
+The top-level flow passes `WORKLOAD_DTB` as `DEFAULT_DTB` and copies the assembled
+firmware unchanged before Bin2ddr conversion.
 
 Example:
 
@@ -87,6 +89,30 @@ Output:
 ready-to-run/xiangshan-linux-hello/xiangshan-linux-hello.bin
 ready-to-run/xiangshan-linux-hello/xiangshan-linux-hello.txt
 ```
+
+### BOOM FPGA
+
+After the BOOM integration in #44, build a 2 GiB FPGA workload with:
+
+```sh
+make workload boom TARGET=linux/hello
+```
+
+This selects upstream `boom-fpga-mem2g`: 2 GiB RAM, CLINT at `0x02000000`,
+PLIC at `0x0c000000`, and the board UART16550 at `0x310b0000` (50 MHz,
+four-byte registers). workload-builder selects `boom_defconfig` for BOOM,
+with RV64GC/LP64D userspace and V/KVM disabled in the kernel.
+
+The `boom-mem2g` profile uses the simulation UART at `0x10000000`.
+Keep the FPGA profile for `MediumBoomFpgaConfig` with its default memory size;
+select a matching custom `WORKLOAD_DTB` when changing `BOOM_MEM_SIZE` or the
+memory map. BOOM AM targets require a separate ISA/UART profile and are rejected.
+
+Start with `linux/hello`, whose init exits directly through NEMU_TRAP. The
+upstream `nemu-exec` launcher used by some other Linux workloads emits
+XiangShan profiling traps `0x100` and `0x101` before running the payload. BOOM
+currently reports every NEMU_TRAP as an exit, so those workloads need a
+BOOM-aware launcher before their execution can be validated.
 
 ## DDR Randomization, or Image Padding
 
