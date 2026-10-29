@@ -196,14 +196,14 @@ packet length/corrupted C2H data.
 
     ```sh
     # XiangShan
-    make nemu NEMU_CONFIG=riscv64-xs-ref_defconfig
+    make nemu NEMU_CONFIG=riscv64-xs-kmhv2-ref_defconfig
 
     # NutShell
     make nemu NEMU_CONFIG=riscv64-nutshell-ref_defconfig
     ```
 
     A common mistake is using the XiangShan NEMU config with NutShell, or vice versa.
-    XiangShan defaults to the vector-capable `riscv64-xs-ref_defconfig`; use a no-vector NEMU config only with a matching no-vector RTL build.
+    XiangShan defaults to the vector-capable `riscv64-xs-kmhv2-ref_defconfig`; use a no-vector NEMU config only with a matching no-vector RTL build.
 
 2. **Check the mismatch details**: The `fpga-host` error output shows the checker name, cycle number, and divergent DUT vs REF state. Note which checker (e.g., `IntWriteback`, `CSR`, `Load`) triggers first — this narrows the scope.
 
