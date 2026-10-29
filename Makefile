@@ -48,7 +48,7 @@ VERILOG_LOG ?= $(BUILD_LOG_DIR)/verilog/verilog-$(DESIGN)-$(LOG_STAMP).log
 HOST_LOG ?= $(BUILD_LOG_DIR)/host/host-$(DESIGN)-$(LOG_STAMP).log
 WORKLOAD_LOG ?= $(BUILD_LOG_DIR)/workload/workload-$(WORKLOAD_TAG)-$(LOG_STAMP).log
 
-NEMU_CONFIG ?= riscv64-xs-ref_defconfig
+NEMU_CONFIG ?= riscv64-$(if $(filter nutshell boom,$(DESIGN)),$(DESIGN),xs-kmhv2)-$(if $(filter fast fork,$(REF_MODE)),fastref,ref)_defconfig
 NEMU_SO_NAME ?= riscv64-nemu-interpreter-so
 READY_TO_RUN_DIR ?= $(ROOT_DIR)/ready-to-run
 NEMU_OUT_DIR ?= $(READY_TO_RUN_DIR)/$(NEMU_CONFIG)

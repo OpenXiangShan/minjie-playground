@@ -184,7 +184,8 @@ make project FPGA_BACKEND=<FPGA_BACKEND> \
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEMU_CONFIG` | `riscv64-xs-ref_defconfig` | NEMU defconfig used to build the reference SO |
+| `NEMU_CONFIG` | `riscv64-xs-kmhv2-ref_defconfig` for XiangShan | NEMU defconfig used to build the reference SO |
+| `REF_MODE` | empty | `fast` or `fork` selects the FAST REF profile for XiangShan, NutShell or BOOM |
 
 ### Example
 
@@ -194,6 +195,13 @@ make nemu NEMU_CONFIG=$NEMU_CONFIG
 ```
 
 Output: `ready-to-run/$NEMU_CONFIG/riscv64-nemu-interpreter-so`
+
+NEMU tracks upstream `master`. XiangShan uses the Kunminghu V2 profiles to
+match its `kunminghu-v2` RTL; NutShell uses `riscv64-nutshell-ref_defconfig`.
+`DESIGN=boom` selects `riscv64-boom-ref_defconfig`. For all three designs,
+`REF_MODE=fast` or `REF_MODE=fork` selects the corresponding `-fastref_defconfig`,
+which enables the shared FAST reference and store hashing used by DiffTest fork
+checking. An explicit `NEMU_CONFIG` overrides these defaults.
 
 ## Step 6: Build Workload
 
