@@ -10,6 +10,7 @@ minjie-playground/
 ├── difftest/                # DiffTest framework (shared by XS & NutShell)
 ├── XiangShan/               # XiangShan RTL source
 ├── NutShell/                # NutShell RTL source
+├── riscv-boom/              # BOOM RTL source (dev-difftest)
 ├── NEMU/                    # NEMU reference model
 ├── workload-builder/        # Workload compilation (Linux & AM)
 ├── Bin2ddr/                 # Binary-to-DDR-txt converter
@@ -31,6 +32,7 @@ minjie-playground/
 | `difftest/` | DiffTest hardware modules + software checkers + FPGA host binary. Linked into both XiangShan and NutShell via `make init`. |
 | `XiangShan/` | XiangShan (KunMinghu) RTL. Generates Verilog for FPGA synthesis. |
 | `NutShell/` | NutShell RTL. Generates Verilog for FPGA synthesis. |
+| `riscv-boom/` | BOOM RTL. Generates FPGA Verilog with external MMIO AXI. |
 | `NEMU/` | RISC-V emulator used as the DiffTest reference model. Compiled into a `.so` shared library. |
 | `workload-builder/` | Builds Linux and AM (bare-metal) workloads with device trees, OpenSBI, and rootfs. |
 | `Bin2ddr/` | Converts a binary image into a `.txt` file for JTAG DDR initialization. H2C runs use the workload `.bin` directly. |

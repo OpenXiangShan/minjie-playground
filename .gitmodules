@@ -27,3 +27,7 @@
 	path = dma_ip_drivers
 	url = https://github.com/klin02/dma_ip_drivers.git
 	branch = fpga-diff
+[submodule "riscv-boom"]
+	path = riscv-boom
+	url = https://github.com/poemonsense/riscv-boom.git
+	branch = dev-difftest

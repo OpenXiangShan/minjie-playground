@@ -8,7 +8,7 @@ BUILD_LOG_DIR ?= $(BUILD_DIR)/build-log
 LOG_STAMP := $(shell date +%Y%m%d-%H%M%S)
 TIME_STAMP := $(shell date +%H%M%S)
 
-DESIGN_GOAL := $(firstword $(filter xiangshan nutshell xs nut,$(MAKECMDGOALS)))
+DESIGN_GOAL := $(firstword $(filter xiangshan nutshell boom xs nut,$(MAKECMDGOALS)))
 DESIGN ?= $(DESIGN_GOAL)
 ifeq ($(DESIGN),xs)
 override DESIGN := xiangshan
@@ -21,6 +21,7 @@ NO_DIFF ?= 0
 
 XS_HOME := $(ROOT_DIR)/XiangShan
 NUT_HOME := $(ROOT_DIR)/NutShell
+BOOM_HOME ?= $(ROOT_DIR)/riscv-boom
 WORKLOAD_HOME := $(ROOT_DIR)/workload-builder
 BIN2DDR_HOME := $(ROOT_DIR)/Bin2ddr
 DIFFTEST_HOME := $(ROOT_DIR)/difftest
@@ -34,8 +35,15 @@ XS_DEBUG_ARGS ?= --difftest-config $(DIFFTEST_CONFIG) $(if $(strip $(DIFFTEST_EX
 
 NUT_BOARD ?= fpgadiff
 NUT_MILL_ARGS ?= --difftest-config $(DIFFTEST_CONFIG)
+BOOM_CONFIG ?= MediumBoomFpgaConfig
 
-DESIGN_HOME = $(if $(filter $(DESIGN),nutshell),$(NUT_HOME),$(XS_HOME))
+# DESIGN:CPU:DESIGN_HOME
+DESIGN_TABLE = \
+	xiangshan:kmh:$(XS_HOME) \
+	nutshell:nutshell:$(NUT_HOME) \
+	boom:boom:$(BOOM_HOME)
+DESIGN_INFO = $(subst :, ,$(or $(filter $(DESIGN):%,$(DESIGN_TABLE)),$(firstword $(DESIGN_TABLE))))
+DESIGN_HOME = $(word 3,$(DESIGN_INFO))
 FPGA_HOST_HOME ?=
 USE_XDMA_H2C ?= 1
 FPGA_HOST_ARGS ?= RELEASE=1 FPGA=1 DIFFTEST_PERFCNT=1
@@ -67,7 +75,7 @@ FPGA_RUNTIME ?= $(FPGA_HOST)
 
 FPGA_DIFF_HOME := $(ROOT_DIR)/env-scripts/fpga_diff
 
-CPU ?= $(if $(filter $(DESIGN),nutshell),nutshell,kmh)
+CPU ?= $(word 2,$(DESIGN_INFO))
 SUFFIX ?=
 ifeq ($(NO_DIFF),1)
 ifeq ($(filter nodiff nodiff-%,$(SUFFIX)),)
@@ -102,14 +110,14 @@ define require_var
 endef
 
 define require_design
-	@test "$(DESIGN)" = "xiangshan" -o "$(DESIGN)" = "nutshell" || { \
-		echo "ERROR: pass design as DESIGN=xiangshan/nutshell or make $@ xiangshan/nutshell"; \
+	@test "$(DESIGN)" = "xiangshan" -o "$(DESIGN)" = "nutshell" -o "$(DESIGN)" = "boom" || { \
+		echo "ERROR: pass DESIGN=xiangshan/nutshell/boom or make $@ xiangshan/nutshell/boom"; \
 		exit 1; \
 	}
 endef
 
 define link_one_difftest
-	dst="$(1)/difftest"; repo="$(1)"; rel="../difftest"; \
+	dst="$(1)/difftest"; repo="$(1)"; rel=$$(realpath --relative-to="$$repo" "$(DIFFTEST_HOME)"); \
 	if [ -L "$$dst" ]; then \
 		current=$$(readlink "$$dst"); \
 		if [ "$$current" != "$$rel" ]; then unlink "$$dst"; ln -s "$$rel" "$$dst"; fi; \
@@ -150,7 +158,7 @@ AM_CPPFLAGS  ?= -DUART16550=1
 
 HOST ?=
 DIFF ?=
-RAM_SIZE ?= $(if $(filter nutshell,$(DESIGN)),2GB,16GB)
+RAM_SIZE ?= $(if $(filter nutshell boom,$(DESIGN)),2GB,16GB)
 RANDOM_MEM ?= 1
 SEED ?= 1234
 AXI_DELAY ?= 0
@@ -158,13 +166,14 @@ RUN_LOG ?= $(BUILD_DIR)/run-log/run-$$(date +%Y%m%d-%H%M%S).log
 
 .PHONY: help init link_difftest clean verilog release host project bit \
 	write_bitstream write_flash write_ddr reset_cpu workload nemu run_host ila_clear \
-	xiangshan nutshell xs nut
+	xiangshan nutshell boom xs nut
 
 help:
 	@printf '%s\n' 'FpgaDiff playground targets:'
 	@printf '%s\n' '  make init                         init top submodules; run submodule init where available'
 	@printf '%s\n' '  make verilog xiangshan            build XiangShan FPGA DiffTest Verilog'
 	@printf '%s\n' '  make verilog nutshell             build NutShell FPGA DiffTest Verilog'
+	@printf '%s\n' '  make verilog boom                 build MediumBoomFpgaConfig'
 	@printf '%s\n' '  make release xiangshan            package RTL/difftest release'
 	@printf '%s\n' '  make host xiangshan FPGA_HOST_HOME=...'
 	@printf '%s\n' '  make project xiangshan            prepare a vivado (default) or uvhs project'
@@ -188,13 +197,15 @@ help:
 	@printf '%s\n' ''
 	@printf '%s\n' 'Set FPGA_BUILD_REMOTE for an NFS build host; set REMOTE_DIR for FPGA hosts.'
 
-# Keep XS/Nut difftest as symlinks to the top-level difftest; otherwise
+# Keep design difftest as symlinks to the top-level difftest; otherwise
 # their submodule init checks out the shared difftest to their gitlink commits.
 init:
 	git submodule update --init
 	git -C $(XS_HOME) config submodule.difftest.update none
 	git -C $(NUT_HOME) config submodule.difftest.update none
+	git -C $(BOOM_HOME) config submodule.difftest.update none
 	$(MAKE) -C $(XS_HOME) init
+	$(MAKE) -C $(BOOM_HOME) init
 	$(MAKE) -C $(WORKLOAD_HOME) init
 	$(MAKE) -C $(BIN2DDR_HOME) FPGA=1
 	$(MAKE) link_difftest
@@ -202,8 +213,7 @@ init:
 link_difftest:
 	@set -e; \
 	test -d "$(DIFFTEST_HOME)" || { echo "ERROR: missing top-level difftest at $(DIFFTEST_HOME)"; exit 1; }; \
-	$(call link_one_difftest,$(XS_HOME)); \
-	$(call link_one_difftest,$(NUT_HOME))
+	$(foreach entry,$(DESIGN_TABLE),$(call link_one_difftest,$(word 3,$(subst :, ,$(entry))));)
 
 clean:
 	$(call require_design)
@@ -218,6 +228,12 @@ ifeq ($(DESIGN),nutshell)
 	NOOP_HOME=$(NUT_HOME) \
 	$(MAKE) -C $(NUT_HOME) verilog BOARD=$(NUT_BOARD) \
 		MILL_ARGS="$(NUT_MILL_ARGS)" -j$(JOBS) 2>&1 | tee $(VERILOG_LOG)
+else ifeq ($(DESIGN),boom)
+	set -o pipefail; \
+	NOOP_HOME=$(BOOM_HOME) \
+	$(MAKE) -C $(BOOM_HOME) verilog CONFIG=$(BOOM_CONFIG) \
+		DIFFTEST_CONFIG=$(DIFFTEST_CONFIG) \
+		-j$(JOBS) 2>&1 | tee $(VERILOG_LOG)
 else
 	set -o pipefail; \
 	NOOP_HOME=$(XS_HOME) \
@@ -248,7 +264,6 @@ release:
 host:
 	$(call require_design)
 	$(call require_var,FPGA_HOST_HOME)
-	$(MAKE) link_difftest
 	mkdir -p $(dir $(HOST_LOG))
 	set -o pipefail; \
 	NOOP_HOME=$(FPGA_HOST_HOME) \
@@ -420,5 +435,5 @@ run_host:
 	((host_status == 0)) || exit $$host_status; \
 	exit $$runtime_status
 
-xiangshan nutshell xs nut:
+xiangshan nutshell boom xs nut:
 	@:
