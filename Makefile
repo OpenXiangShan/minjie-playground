@@ -48,7 +48,7 @@ VERILOG_LOG ?= $(BUILD_LOG_DIR)/verilog/verilog-$(DESIGN)-$(LOG_STAMP).log
 HOST_LOG ?= $(BUILD_LOG_DIR)/host/host-$(DESIGN)-$(LOG_STAMP).log
 WORKLOAD_LOG ?= $(BUILD_LOG_DIR)/workload/workload-$(WORKLOAD_TAG)-$(LOG_STAMP).log
 
-NEMU_CONFIG ?= riscv64-xs-ref_defconfig
+NEMU_CONFIG ?= $(if $(filter nutshell,$(DESIGN)),riscv64-nutshell-ref_defconfig,riscv64-xs-ref_defconfig)
 NEMU_SO_NAME ?= riscv64-nemu-interpreter-so
 READY_TO_RUN_DIR ?= $(ROOT_DIR)/ready-to-run
 NEMU_OUT_DIR ?= $(READY_TO_RUN_DIR)/$(NEMU_CONFIG)
@@ -349,14 +349,18 @@ workload:
 	mkdir -p "$(WORKLOAD_OUT_DIR)" $(dir $(WORKLOAD_LOG))
 	set -o pipefail; \
 	if [ "$(WORKLOAD_TYPE)" = "am" ]; then \
-		$(MAKE) -C $(WORKLOAD_HOME) $(TARGET) ARCH=$(AM_ARCH) CPPFLAGS="$(AM_CPPFLAGS)" -j$(JOBS) 2>&1 | tee $(WORKLOAD_LOG); \
+		$(MAKE) -C $(WORKLOAD_HOME) $(TARGET) ARCH=$(AM_ARCH) AM_ARCH=$(AM_ARCH) CPPFLAGS="$(AM_CPPFLAGS)" -j$(JOBS) 2>&1 | tee $(WORKLOAD_LOG); \
 	else \
 		$(MAKE) -C $(WORKLOAD_HOME) $(TARGET) DEFAULT_DTB=$(basename $(WORKLOAD_DTB)) -j$(JOBS) 2>&1 | tee $(WORKLOAD_LOG); \
 	fi
 	set -o pipefail; src="$(WORKLOAD_BIN)"; \
 	if [ -z "$$src" ] && [ "$(WORKLOAD_TYPE)" = "linux" ]; then src="$(WORKLOAD_LINUX_BIN)"; fi; \
 	if [ -z "$$src" ] && [ "$(WORKLOAD_TYPE)" = "am" ]; then \
-		src=$$(find "$(WORKLOAD_AM_BIN_DIR)" -maxdepth 1 -type f -name '*.bin' | sort | head -n 1); \
+		if [ "$(WORKLOAD_NAME)" = hello ]; then \
+			src="$(WORKLOAD_AM_BIN_DIR)/hello-$(AM_ARCH).bin"; \
+		else \
+			src=$$(find "$(WORKLOAD_AM_BIN_DIR)" -maxdepth 1 -type f -name '*.bin' | sort | head -n 1); \
+		fi; \
 	fi; \
 	test -n "$$src" && test -f "$$src" || { echo "ERROR: workload binary not found. Set WORKLOAD_BIN=..."; exit 1; }; \
 	cp "$$src" $(WORKLOAD_OUT_BIN) 2>&1 | tee -a $(WORKLOAD_LOG)
