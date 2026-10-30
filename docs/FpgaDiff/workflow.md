@@ -274,6 +274,7 @@ rsync -a "$BOOTRAM_BIN" "$FPGA_RUNTIME:$REMOTE_DIR/ready-to-run/bootram.bin"
 |----------|---------|-------------|
 | `FPGA_BACKEND` | `vivado` | Use the same backend selected for `make bit` |
 | `FPGA_HOST` | local | XDMA and `fpga-host` machine; empty means local |
+| `FPGA_COMPUTE_HOST` | `$FPGA_HOST` | Separate Vivado REF host; enables XDMA relay when different |
 | `FPGA_RUNTIME` | `$FPGA_HOST` | Bitstream, reset, memory, and ILA machine; empty means local |
 | `REMOTE_DIR` | current checkout | Minjie checkout path on `FPGA_HOST` and `FPGA_RUNTIME` |
 | `REMOTE_ENV` | `source ~/.bash_profile &&` | Environment setup for every SSH command |
@@ -311,6 +312,12 @@ make run_host \
   WORKLOAD=$REMOTE_DIR/ready-to-run/$WORKLOAD_TAG \
   DIFF=$REMOTE_DIR/ready-to-run/$NEMU_CONFIG/riscv64-nemu-interpreter-so
 ```
+
+For Vivado relay, add `FPGA_COMPUTE_HOST=<compute-host>` to `make run_host`.
+Install the matching `fpga-xdma-relay` in `FPGA_HOST`'s `PATH`, and stage the
+release, workload and REF at the same paths on the compute host. Relay defaults
+and environment overrides are described in
+[env-scripts](../../env-scripts/fpga_diff/tools/relay/README.md).
 
 An external-LLC Vivado image also requires its boot ROM in the writable boot
 flash. After every `write_bitstream`, write `<BOOTRAM_BIN>` before `run_host`:
