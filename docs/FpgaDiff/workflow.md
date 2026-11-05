@@ -30,7 +30,7 @@ interprets literal `<` and `>` as redirection operators.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DIFFTEST_CONFIG` | `ESBIFDU` | DiffTest config letters |
-| `DIFFTEST_EXCLUDE` | empty | Comma-separated exclude list, such as `Vec` |
+| `DIFFTEST_EXCLUDE` | `Vec` | Comma-separated XiangShan probe exclude list; set empty to enable vector probes |
 | `JOBS` | `16` | Parallel compilation jobs |
 | `XS_CONFIG` | `FpgaDiffDefaultConfig` | XiangShan config used for `xiangshan` builds |
 
@@ -51,10 +51,24 @@ the generator flag explicitly:
 ```sh
 make verilog xiangshan \
   XS_CONFIG=FpgaDiffKMHV2Config \
-  XS_DEBUG_ARGS="--difftest-config ESBIFDU --external-llc"
+  XS_DEBUG_ARGS="--difftest-config ESBIFDU --difftest-exclude Vec --external-llc"
 ```
 
-For a no-vector XiangShan build, explicitly pass `DIFFTEST_EXCLUDE=Vec`.
+XiangShan vector DiffTest probes are excluded by default. Pass
+`DIFFTEST_EXCLUDE=` to enable them. This setting controls probes only; the
+NEMU reference must export a matching state layout.
+
+For XSAI matrix workloads, select a matrix configuration:
+
+```sh
+make verilog xiangshan XS_CONFIG=FpgaDiffTinyMatrixConfig
+```
+
+`FpgaDiffDefaultMatrixConfig`, `FpgaDiffMinimalMatrixConfig`, and
+`FpgaDiffTinyMatrixConfig` enable DiffTest by default, including the
+AMU/CUTE and Msync probes required by the host matrix checker. The DiffTop
+also supplies its memory AXI interface to `DifftestMemCtrl` for XDMA H2C
+loading, DDR initialization, and CPU AXI delay control.
 
 ## Step 2: Create Release
 
@@ -202,6 +216,15 @@ match its `kunminghu-v2` RTL; NutShell uses `riscv64-nutshell-ref_defconfig`.
 `REF_MODE=fast` or `REF_MODE=fork` selects the corresponding `-fastref_defconfig`,
 which enables the shared FAST reference and store hashing used by DiffTest fork
 checking. An explicit `NEMU_CONFIG` overrides these defaults.
+
+For XSAI matrix configurations, the reference must also enable AME and match
+the RTL matrix geometry, Msync register count, and CSR options. The default
+Kunminghu V2 reference does not enable AME. `FpgaDiffTinyMatrixConfig` uses
+TLEN=32768, TRLEN=512, MELEN=32, and 32 Msync registers; its matching reference
+uses `CONFIG_RV_AME=y`, `CONFIG_RV_AME_TLEN=32768`,
+`CONFIG_RV_AME_TRLEN=512`, `CONFIG_RV_AME_MLEN=32`,
+`CONFIG_RV_AME_MSYNC_32=y`, `CONFIG_RV_SSTATUS_MS=y`, and `CONFIG_GEILEN=7`
+on top of the Kunminghu V2 reference profile.
 
 ## Step 6: Build Workload
 

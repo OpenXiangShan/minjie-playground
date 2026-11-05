@@ -28,7 +28,7 @@ DIFFTEST_HOME := $(ROOT_DIR)/difftest
 NEMU_HOME := $(ROOT_DIR)/NEMU
 
 DIFFTEST_CONFIG ?= ESBIFDU
-DIFFTEST_EXCLUDE ?=
+DIFFTEST_EXCLUDE ?= Vec
 
 XS_CONFIG ?= FpgaDiffDefaultConfig
 XS_DEBUG_ARGS ?= --difftest-config $(DIFFTEST_CONFIG) $(if $(strip $(DIFFTEST_EXCLUDE)),--difftest-exclude $(DIFFTEST_EXCLUDE),)
@@ -191,7 +191,7 @@ help:
 	@printf '%s\n' ''
 	@printf '%s\n' 'run_host auto-finds fpga-host under FPGA_BIT_HOME and .bin/.txt under WORKLOAD.'
 	@printf '%s\n' 'Set WORKLOAD_DTB=<dtb-name> to override the default Linux DTB splice before Bin2ddr.'
-	@printf '%s\n' 'Vector DiffTest is enabled by default; set DIFFTEST_EXCLUDE=Vec for a no-vector build.'
+	@printf '%s\n' 'XiangShan vector DiffTest probes are excluded by default; set DIFFTEST_EXCLUDE= to enable them.'
 	@printf '%s\n' 'Set DIFF=/path/to/nemu-so for diff mode; leave DIFF empty for --no-diff.'
 	@printf '%s\n' 'Set FPGA_BACKEND=uvhs to use the UVHS compile, runtime, memory, reset, and ILA paths.'
 	@printf '%s\n' 'Set FPGA_HOST, optionally FPGA_COMPUTE_HOST and FPGA_RUNTIME.'

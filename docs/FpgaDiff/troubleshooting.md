@@ -195,15 +195,27 @@ packet length/corrupted C2H data.
 1. **Verify NEMU configuration**: Ensure the NEMU defconfig matches the design:
 
     ```sh
-    # XiangShan
-    make nemu NEMU_CONFIG=riscv64-xs-kmhv2-ref_defconfig
+    # XSAI FpgaDiffTinyMatrixConfig: RTL generated with DIFFTEST_EXCLUDE=Vec (default)
+    make nemu NEMU_CONFIG=riscv64-matrix-xs-lite-ref-novec_defconfig
+
+    # The same XSAI config with vector probes enabled during RTL generation (DIFFTEST_EXCLUDE=)
+    make nemu NEMU_CONFIG=riscv64-matrix-xs-lite-ref_defconfig
 
     # NutShell
     make nemu NEMU_CONFIG=riscv64-nutshell-ref_defconfig
     ```
 
-    A common mistake is using the XiangShan NEMU config with NutShell, or vice versa.
-    XiangShan defaults to the vector-capable `riscv64-xs-kmhv2-ref_defconfig`; use a no-vector NEMU config only with a matching no-vector RTL build.
+    Choose the reference that matches the generated RTL. The XSAI noVec profile
+    disables both `CONFIG_DIFFTEST_CHECK_VRF` and `CONFIG_DIFFTEST_CHECK_VCSR`,
+    while retaining RVV execution. Its 1000-byte register-copy state matches
+    `FpgaDiffTinyMatrixConfig` with vector probes excluded; the corresponding
+    full-vector profile exports 1568 bytes.
+
+    `NEMU_CONFIG` is not selected automatically from `DIFFTEST_EXCLUDE`.
+    The default `riscv64-xs-kmhv2-ref_defconfig` lacks AME and does not match this
+    matrix configuration. Other XSAI configurations also need matching matrix
+    geometry and CSR options. Rebuild the reference after changing its config;
+    changing the reference alone does not regenerate RTL or its FPGA host.
 
 2. **Check the mismatch details**: The `fpga-host` error output shows the checker name, cycle number, and divergent DUT vs REF state. Note which checker (e.g., `IntWriteback`, `CSR`, `Load`) triggers first — this narrows the scope.
 
@@ -215,7 +227,7 @@ packet length/corrupted C2H data.
     - **Level 2**: Query DB — compare DUT and REF state at the divergent step
     - **Level 3**: Waveform dump — if Query DB is not sufficient, dump waveforms with ILA
 
-4. **Check for known issues**: Some comparison errors are caused by non-deterministic hardware state (e.g., timer CSRs, performance counters). These are typically excluded via `DIFFTEST_EXCLUDE`. Verify the exclude list includes appropriate modules. Do not exclude `Vec` unless the RTL and NEMU reference are both built for a no-vector flow.
+4. **Check for known issues**: Some comparison errors are caused by non-deterministic hardware state (e.g., timer CSRs, performance counters). These are typically excluded via `DIFFTEST_EXCLUDE`. Verify the exclude list includes appropriate modules. Ensure the NEMU register-copy layout and size match the excluded probes (`Vec` by default for XiangShan); disabling vector comparisons alone is insufficient.
 
 ## Quick Reference
 
