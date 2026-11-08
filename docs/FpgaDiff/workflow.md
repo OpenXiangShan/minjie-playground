@@ -157,8 +157,10 @@ bitstream/$BIT_TAG/*.bit
 bitstream/$BIT_TAG/*.ltx
 ```
 
-`env-scripts/fpga_diff` defaults `DDR_RANK_WIDTH=2`, selecting the 16GB two-rank DDR configuration:
-a 34-bit DDR AXI address, the `MTA16ATF2G64HZ-2G3` memory part, and `ddr_rank1.xdc`.
+`env-scripts/fpga_diff` defaults `DDR_RANK_WIDTH=1`, selecting the 8GiB single-rank DDR configuration:
+a 33-bit DDR AXI address, the `MTA8ATF1G64HZ-2G3` memory part, and a `0x200000000` address range.
+Set `DDR_RANK_WIDTH=2` to select the 16GiB two-rank configuration with a 34-bit DDR AXI address,
+the `MTA16ATF2G64HZ-2G3` memory part, a `0x400000000` address range, and `ddr_rank1.xdc`.
 This physical DDR configuration is independent of the `RAM_SIZE` passed to `fpga-host` below.
 
 With `FPGA_BACKEND=uvhs`, the same `bit` target forwards the release and

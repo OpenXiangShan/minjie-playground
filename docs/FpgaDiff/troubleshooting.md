@@ -195,21 +195,27 @@ packet length/corrupted C2H data.
 1. **Verify NEMU configuration**: Ensure the NEMU defconfig matches the design:
 
     ```sh
-    # XSAI FpgaDiffTinyMatrixConfig: RTL generated with DIFFTEST_EXCLUDE=Vec (default)
-    make nemu NEMU_CONFIG=riscv64-matrix-xs-lite-ref-novec_defconfig
+    # XSAI FpgaDiffTinyMatrixConfig: RTL generated with DIFFTEST_EXCLUDE=Vec,Fp
+    make nemu NEMU_CONFIG=riscv64-matrix-xs-lite-ref-novecfp_defconfig
 
-    # The same XSAI config with vector probes enabled during RTL generation (DIFFTEST_EXCLUDE=)
+    # The same XSAI config with all probes enabled during RTL generation (DIFFTEST_EXCLUDE=)
     make nemu NEMU_CONFIG=riscv64-matrix-xs-lite-ref_defconfig
 
     # NutShell
     make nemu NEMU_CONFIG=riscv64-nutshell-ref_defconfig
     ```
 
-    Choose the reference that matches the generated RTL. The XSAI noVec profile
-    disables both `CONFIG_DIFFTEST_CHECK_VRF` and `CONFIG_DIFFTEST_CHECK_VCSR`,
-    while retaining RVV execution. Its 1000-byte register-copy state matches
-    `FpgaDiffTinyMatrixConfig` with vector probes excluded; the corresponding
-    full-vector profile exports 1568 bytes.
+    Choose the reference that matches the generated RTL. The XSAI noVecFp profile
+    disables `CONFIG_DIFFTEST_CHECK_VRF`, `CONFIG_DIFFTEST_CHECK_VCSR`,
+    `CONFIG_DIFFTEST_CHECK_FRF` and `CONFIG_DIFFTEST_CHECK_FCSR`, while retaining
+    RVV and floating-point execution. Its 736-byte register-copy state matches
+    `FpgaDiffTinyMatrixConfig` with both vector and floating-point probes excluded;
+    the full-check profile exports 1568 bytes.
+
+    For RTL generated with only `DIFFTEST_EXCLUDE=Vec` (the default), start from
+    `riscv64-matrix-xs-lite-ref_defconfig` and disable only
+    `CONFIG_DIFFTEST_CHECK_VRF` and `CONFIG_DIFFTEST_CHECK_VCSR`. Keep floating-point
+    checks enabled; this combination exports 1000 bytes.
 
     `NEMU_CONFIG` is not selected automatically from `DIFFTEST_EXCLUDE`.
     The default `riscv64-xs-kmhv2-ref_defconfig` lacks AME and does not match this
