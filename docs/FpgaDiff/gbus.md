@@ -1,0 +1,352 @@
+# GBus Host Interface
+
+`DIFFTEST_HOSTIF=GBUS` replaces the PCIe/XDMA host link with the UVHS GBus
+prototyping bus. It is the alternative to the default XDMA path described in
+[workflow.md](./workflow.md) and [xdma.md](./xdma.md), and it is UVHS-only: the
+`FPGA_BACKEND=vivado` flow still requires XDMA.
+
+## When To Use It
+
+Use GBus when any of the following holds:
+
+- No PCIe endpoint is available on the board, or the XDMA driver cannot be
+  loaded on the host machine.
+- The DiffTest stream saturates the host link. GBus carries the C2H stream as a
+  frame ring drained by AXI DMA in batches, which reaches about 32 MB/s on the
+  measured boards, against one register read per 32-bit word in the
+  register-window transport it replaces.
+- You are debugging a board where the CPU's own DRAM bus is the interesting
+  observation point, since the GBus host snoops the same port the CPU uses.
+
+Stay on XDMA when a bitstream already exists for it, or when the work is on the
+Vivado backend, which has no GBus support.
+
+## Requirements
+
+GBus support is not in the submodule revisions pinned by `master` yet. Both
+halves must come from their branches:
+
+| Component | Revision | Provides |
+|---|---|---|
+| `env-scripts` | `fix/nutshell-gbus-20261010-avgpekx6` | GBus RTL, `partition.tcl` entries, `DIFFTEST_HOSTIF` plumbing, `gbus_clk_wiz` |
+| `difftest` | `fix/nutshell-gbus-gbd1-dma` | GBD1 streaming transport in `src/test/csrc/plugin/uvhs-gbus/` |
+
+A host binary and a bitstream must be built from matching revisions. The two
+cross-check each other at runtime:
+
+- The config-bar layout must match. A host from a different difftest revision
+  writes `H2C_SIZE_MB` to an offset the fabric does not decode and fails with
+  `GBus BAR write readback mismatch`.
+- The C2H engine must match. A host built against the old register-window
+  transport reports `GBus C2H endpoint is not GBD1 (id=0x...)`; a bitstream
+  without the ring fails with `GBus bitstream does not expose the GBD1 streaming
+  frame FIFO`; and a ring whose geometry disagrees with the host's constants
+  fails with `GBus GBD1 streaming aperture or ring size is invalid`.
+
+## Topology
+
+The GBus host drives the CPU's own DRAM bus, so which FPGA holds the user DDR
+decides how the path is wired. `GBUS_FPGA` and `GBUS_DMA_FPGA` must describe the
+bitstream you actually loaded.
+
+### XiangShan, mainline partition
+
+The DDR/LLC half stays on `b0.f0` behind connector `b0.F0_FMC0` and the CPU plus
+the GBus host sit on `b0.f2`. The merged AXI therefore crosses the inter-FPGA
+link, and `uvhs_gbus_ddr_path.svh` re-times it once into the F0-local CPU clock
+through `U_GBUS_DDR_XPART_CDC`. Without that CDC the whole 100 MHz domain has to
+fit in one inter-FPGA transfer and signoff closes it near 16 MHz, which stalls
+every DDR access.
+
+### NutShell, DDR beside the CPU
+
+The DDR moves to `b0.f2` on the `b0.F2_FMC3` daughter card and no CDC exists:
+the arbiter and the bridge share an FPGA, so the merged AXI stays in
+`gbus_host_clk` end to end. `partition.tcl` names the CDC cell only when the
+mainline CPU is elaborated, so the NutShell netlist contains no such cell.
+
+`b0.F2_FMC3` is the slot UVHS reserves for UHD waveform capture. Binding a
+probe group there makes the backend instantiate `uvw_uhd_top` and reject the user
+DDR, so `CPU=nutshell DIFFTEST_HOSTIF=GBUS` defaults `UVHS_PROBE_TCL` to empty.
+Set it explicitly to trade the DDR back for UHD capture.
+
+## Building
+
+### Bitstream
+
+```bash
+make bit nutshell \
+  FPGA_BACKEND=uvhs \
+  DIFFTEST_HOSTIF=GBUS \
+  FPGA_BUILD_REMOTE=<build-machine> \
+  FPGA_HOST=<fpga-host> \
+  FPGA_RUNTIME=<fpga-runtime> \
+  REMOTE_DIR=<minjie-checkout>
+```
+
+`DIFFTEST_HOSTIF` is set on the command line, so GNU make forwards it to the
+`env-scripts/fpga_diff` sub-make; nothing else has to be added to the target.
+`make bit xiangshan` selects the mainline partition (it maps to `CPU=kmh`
+through `DESIGN_TABLE`), `make bit nutshell` the F2-DDR one.
+
+What the flag changes inside the build:
+
+| Setting | Effect with `DIFFTEST_HOSTIF=GBUS` |
+|---|---|
+| `UVHS_DDR_AXI_WIDTH` | 256 bits. NutShell would otherwise build 64; the mainline CPU is 256 either way |
+| `UVHS_PROBE_TCL` | empty for `CPU=nutshell`, so the DDR can use `b0.F2_FMC3` |
+| `UVHS_FUNCTIONAL_DDR_REMOTE_LINK` | must stay `0`; `1` re-enables the pre-CDC single-clock path and the Makefile rejects it without `DIFFTEST_HOSTIF=GBUS` |
+| `gbus_clk_wiz` input | 80 MHz `clk7_p` for the mainline CPU, 50 MHz `clk6_p` for NutShell |
+
+The `clk7_p` reference matters: UVHS relaxes `clk6_p`'s signoff period from
+20 ns to about 35.7 ns when a reset path crosses between FPGAs, and the bitstream
+MMCM check recomputes the VCO from the relaxed period. A 50 MHz reference then
+yields 672 MHz instead of 1200 MHz and fails with **PDRC-179**.
+
+Do not add `+define+UVHS_FUNCTIONAL_DDR_REMOTE_LINK` to a stale
+`rtl/filelist.f`. The define is regenerated by
+`env-scripts/fpga_diff/tools/update_core_flist.sh` from the make variables, and a
+leftover copy silently selects the single-clock DDR path while the build still
+appears to succeed.
+
+### Host
+
+```bash
+make host nutshell \
+  FPGA_HOST_ARGS="RELEASE=1 FPGA=1 DIFFTEST_HOSTIF=GBUS \
+    GBUS_RUNTIME_ROOT=/nfs/tools/UVHS/UVH_P4_0420/runtime_sw_service/export/gbus_runtime" \
+  FPGA_HOST_HOME=<difftest-checkout>
+```
+
+Confirm the flag reached the compiler before trusting the binary:
+
+```bash
+grep -c DIFFTEST_HOSTIF_GBUS build/host.log    # non-zero
+```
+
+`libuvgbus.so` is a vendor runtime and is not in the tree. `fpga.mk` stops with
+"GBus runtime not found" unless `GBUS_RUNTIME_ROOT` points at a UVHS
+`gbus_runtime` directory or `GBUS_LIBUVGBUS` names the library itself;
+`GBUS_LIBUVGBUS` wins when both are set. Use the SDK that belongs to the runtime
+you will download with, since the host links against it and resolves it at
+runtime through `-rpath`.
+
+## Runtime Configuration
+
+`run_host` reaches the board through SSH, so host-side variables have to travel
+in `REMOTE_ENV`. They are read by `fpga-host` from its own environment.
+
+```bash
+make run_host nutshell \
+  FPGA_BACKEND=uvhs \
+  FPGA_HOST=<fpga-host> FPGA_RUNTIME=<fpga-runtime> REMOTE_DIR=<minjie-checkout> \
+  FPGA_BIT_HOME=<host-release-dir> \
+  WORKLOAD=<workload-dir> DIFF=<nemu-so> \
+  REMOTE_ENV="GBUS_FPGA=2 GBUS_H2C_CHUNK_BYTES=262144 GBUS_TIMING=1"
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `GBUS_HOST` | `localhost` | Machine running the GBus runtime service |
+| `GBUS_BOARD` | `0` | Board index |
+| `GBUS_PROTOTYPING_INSTANCE` | `0` | Prototyping instance index |
+| `GBUS_FPGA` | `2` | FPGA that hosts the GBus host logic |
+| `GBUS_DMA_FPGA` | `$GBUS_FPGA` | Default DMA target for both directions |
+| `GBUS_H2C_DMA_FPGA` | `$GBUS_DMA_FPGA` | DMA target for H2C writes |
+| `GBUS_C2H_DMA_FPGA` | `$GBUS_DMA_FPGA` | DMA target for C2H reads |
+| `GBUS_CONFIG_INSTANCE` | `0` | Config-bar instance |
+| `GBUS_DDR_INSTANCE` | `0` | DDR bridge instance |
+| `GBUS_CHANNEL`, `GBUS_PORT` | `0` | Channel and port index |
+| `GBUS_CONFIG_BASE` | `0x1000` | Aperture base of the config window |
+| `GBUS_DDR_BASE` | `0x0` | Guest memory base in the GBus address space |
+| `GBUS_H2C_CHUNK_BYTES` | `256` | H2C write size. Raise it: the default costs one round trip per 256 bytes, about 11 s for 1 MiB, against 70 ms at `262144` |
+| `GBUS_TIMING` | `0` | Print the `GBUS_TIMING` counters on exit |
+| `GBUS_H2C_VERIFY` | `1` | Read H2C writes back |
+| `GBUS_H2C_VERIFY_FPGA` | `$GBUS_H2C_DMA_FPGA` | FPGA used for the H2C readback check |
+| `GBUS_C2H_VERIFY_FIRST_BANK` | `1` | Verify the first C2H frame |
+| `GBUS_C2H_CONSUME_VERIFY` | `1` | Check that CONSUME advanced the read pointer |
+| `GBUS_C2H_STREAM_MIN_FRAMES` | `64` | Frames buffered before a drain starts. `0` waits for a full ring |
+| `GBUS_C2H_POLL_US` | `100` | Status poll interval while waiting for frames |
+| `GBUS_C2H_IDLE_TIMEOUT_SEC` | `30` | Idle time before the drain is declared stuck |
+
+Set `GBUS_FPGA`/`GBUS_DMA_FPGA` from the bitstream, not from habit. The host
+addresses H2C and C2H at their own FPGA indices because a multi-FPGA place can
+put the functional DDR and the ring on different devices.
+
+## Register Interface
+
+The config window is `GBUS_CONFIG_BASE + 0x1200` through `+0x1254`. Word
+offsets below are relative to the aperture.
+
+### Control and status
+
+| Offset | Name | Access | Contents |
+|---|---|---|---|
+| `0x1200` | `status` | R | Status word, bits below |
+| `0x1204` | `control` | W | bit0 ENABLE, bit1 ACK (release one frame), bit2 CLEAR_ERROR, bit3 DISABLE. Reads back `enabled` in bit 1, not the value written |
+| `0x1208` | `id` | R | `0x4742_4431` (`GBD1`) |
+| `0x120c` | `wr_count` | R | Frames written since reset |
+| `0x1210` | `aperture` | R | Ring base, `0x0ff4_0000` |
+| `0x1214` | `ring_bytes` | R | `786432` |
+| `0x1218` | debug | R | AXI `araddr` of the last frame beat |
+| `0x121c` | debug | R | AXI attributes of the last frame beat |
+| `0x1220` | debug | R | Beat count of the last frame |
+| `0x1224` | debug | R | Control-write count |
+| `0x1228` | debug | R | Last accepted control value |
+| `0x122c` | debug | R | Last rejected control value |
+| `0x1230` | debug | R | bit31 reject-valid, bits30:0 reject state |
+| `0x1234` | debug | R | Rejected control-write count |
+| `0x1238` | `feature` | R | bit0 present, bit2 streaming; the implemented value is `0x5`. Writable only to raise `protocol_error`, so never write it |
+| `0x123c` | `available` | R/W | Read: frames ready. Write: CONSUME that many frames |
+| `0x1240` | `rd_byte` | R | Read pointer in bytes |
+| `0x1244` | `wr_byte` | R | Write pointer in bytes |
+| `0x1248` | snapshot | R | `status` |
+| `0x124c` | snapshot | R | `available` |
+| `0x1250` | snapshot | R | `rd_byte` |
+| `0x1254` | snapshot | R | `wr_byte` |
+
+Read `0x1248` as one four-word block. One grouped read returns the whole drain
+state, which is why a batch costs one config round trip instead of four.
+
+Status bits:
+
+| Bit | Name | Meaning |
+|---|---|---|
+| 31 | present | Engine is in the netlist |
+| 30 | frame_error | A malformed frame was dropped and capture stopped |
+| 29 | protocol_error | Illegal control sequence, e.g. CONSUME beyond `available` |
+| 7 | enabled | Capture armed |
+| 6 | producer valid | The CPU side currently has a frame in flight |
+| 5 | data available | `available != 0` |
+| 4 | active | A C2H burst is being served |
+
+### Frame ring
+
+The ring is 1024 frames of 24 beats of 32 bytes, so 768 bytes per frame and
+786432 bytes total, at `0x0ff4_0000`. It ends exactly at `0x0fff_ffff`, the top
+of port 0, so it can never overlap guest memory.
+
+The protocol is:
+
+1. Write `ENABLE` to `0x1204`.
+2. Poll the snapshot. `available` counts complete frames.
+3. Once `available >= GBUS_C2H_STREAM_MIN_FRAMES`, read that many frames from
+   `aperture + rd_byte` with one DMA call.
+4. Write the frame count to `0x123c`. Only CONSUME advances the read pointer, so
+   a frame the host has not read can never be overwritten.
+5. Repeat from step 2. `available` returning to 0 with `enabled` clear means the
+   CPU stopped producing, which is normal at the end of a run.
+
+Errors are sticky. Clear them with `CLEAR_ERROR` before expecting new frames
+after a `frame_error`.
+
+## A Healthy Run
+
+A working GBus session prints, in order:
+
+```
+[fpga-host] GBus initialized host=localhost board=0 fpga=2 config_base=0x1000 ddr_base=0x0
+[fpga-host] GBus DMA workload queued 1048576 bytes
+[fpga-host] GBus H2C readback verified bytes=1048576 chunks_failed=0 patched=0
+[fpga-host] GBD1 stream ready base=0xff40000 frames=1024 bytes=786432 min_batch=64 poll_us=100 enabled=1
+[fpga-host] GBD1 block register reads verified (13 words per call)
+[fpga-host] GBD1 first frame DMA/config mirror verified bytes=768
+...
+[fpga-host] GBD1 progress mode=stream frames=... bytes=...
+Core 0: HIT GOOD TRAP at pc = 0x8000003c
+[fpga-host] GBD1 stream ended by CPU after frames=... bytes=...
+[fpga-host] GBUS_TIMING c2h totals frames=... bytes=... batches=... elapsed_ms=...
+```
+
+`enabled=1` in the `stream ready` line means the ring armed. `frames=0` in the
+`stream ended` line is the failure signature described below, not a normal end.
+
+## Debug Playbook
+
+Start with the status word: read `0x1200` and `0x1238`. `0x1238 == 0x5` and bit
+31 of `0x1200` set is the minimum proof that the bitstream has the streaming
+engine and the host is addressing the right aperture.
+
+| Symptom | Likely cause | Check |
+|---|---|---|
+| `GBus initialize failed` | Runtime service unreachable, or the SDK does not match | `GBUS_HOST`, `gbus_runtime` library version on both sides |
+| `GBus BAR write readback mismatch offset=0x...` | Host and bitstream from different difftest revisions | Rebuild one of them; the config-bar layout is compiled into both |
+| `GBus bitstream does not expose the GBD1 streaming frame FIFO` | Bitstream still elaborates the GBS1 staging window | `0x1238` reads 0 or the pre-GBD1 value; rebuild the bitstream with GBus enabled |
+| `GBus C2H endpoint is not GBD1 (id=0x...)` | Host is the removed register-window transport | Build `fpga-host` from the GBD1 revision |
+| `GBus GBD1 streaming aperture or ring size is invalid` | Host constants and RTL parameters disagree | Compare `0x1210`/`0x1214` with `GBUS_C2H_STREAM_APERTURE` and `GBUS_C2H_STREAM_FRAME_BYTES` |
+| `GBus runtime does not return consecutive words for grouped config reads` | The runtime serves grouped reads as repeated first-word | The four-word snapshot cannot work; check the runtime version against the host |
+| `GBus timeout waiting for ...` | H2C or DMA never completed | Board reset state, `GBUS_FPGA`, runtime download |
+| `GBus H2C readback mismatch offset=0x...` | Address decode or DDR path broken | Suspect the DDR topology: `GBUS_DDR_BASE`, which FPGA owns the DDR |
+| `frame_error` set in `0x1200` | Malformed frame, capture stopped | Read `0x1218`–`0x1234`; they record the rejected AXI address, attributes, count and control data |
+| `protocol_error` set in `0x1200` | CONSUME larger than `available`, ENABLE and ACK written together, or any write to `0x1238` | `0x122c` holds the rejected control value, `0x1230` the valid flag and state, `0x1234` a reject count. Clear with `CLEAR_ERROR` and check `available` before consuming |
+| `GBD1 stream ended by CPU after frames=0` | Capture never armed, or the engine reset mid-stream | `enabled` in `0x1204`; if it drops after the first CONSUME the engine returned to its stream-reset state and the RTL must be root-caused |
+| `difftest_init_v2: Assertion 'false' failed` | NEMU reference built for a different DUT state size | Rebuild with the matching `NEMU_CONFIG`; check `ref_state_t` size against the release's `build/generated-src/difftest-state.h` |
+| DiffTest diverges with the ring healthy | Frames read from the wrong place or lost | `GBD1 first frame DMA/config mirror verified` must appear; the ring base is read from `0x1210`, so a stale constant in host and RTL cannot hide |
+
+### Measuring throughput
+
+Set `GBUS_TIMING=1` and read the totals line printed at exit:
+
+```
+[fpga-host] GBUS_TIMING c2h totals frames=N bytes=B batches=K elapsed_ms=T avg_frame_us=A
+  dma_calls=K dma_us=D reg_calls=R reg_us=E block_calls=K block_us=F
+  write_calls=W write_us=G dispatch_us=H stream=1
+```
+
+`bytes / elapsed_ms` is the sustained C2H rate. Compare `dma_us` against
+`elapsed_ms`: when the DMA calls consume most of the wall time the link is the
+limit, and when `dispatch_us` or `write_us` dominates the bottleneck is the host
+loop. `GBUS_H2C_CHUNK_BYTES` has no effect on C2H; raising
+`GBUS_C2H_STREAM_MIN_FRAMES` trades latency for fewer, larger DMA calls.
+
+A ring-sized batch is not automatically faster. On the XiangShan board the
+measured ceiling was 31.87 MB/s with 24.1 us per 768-byte frame, which capped
+DiffTest at about 13 MIPS because the ring moves 2.396 bytes per committed
+instruction. If the DiffTest rate is below the CPU's own `clock x IPC`, this is
+the number to attack.
+
+### Reading the window directly
+
+The host's own checks cover most failures, but when the status word itself is
+suspect, read it through the runtime API without starting DiffTest. The call
+sequence is the one `gbus_transport.cpp` uses, and the config window is
+ordinary 32-bit `gbus_read` traffic:
+
+```c
+#include "uvaps_gbus_runtime.h"
+
+gbus_initialize("localhost");                       /* or $GBUS_HOST */
+std::vector<uint8_t> w;
+
+/* gbus_read(prototypingInstance, boardIdx, fpgaIdx, instance, offset, words, value) */
+gbus_read(0, 0, 2, 0, 0x1000 + 0x1200, 1, w);       /* status  */
+gbus_read(0, 0, 2, 0, 0x1000 + 0x1208, 1, w);       /* id      */
+gbus_read(0, 0, 2, 0, 0x1000 + 0x1238, 1, w);       /* feature */
+```
+
+Each `words` unit is four bytes, so `1` reads one 32-bit register. `id` must read
+`0x47424431`, which proves the aperture, and `feature & 0x5 == 0x5` proves the
+streaming engine. Reading the status word before ENABLE, after ENABLE, and after
+the first CONSUME separates an arming problem from a reset problem: `enabled`
+(bit 7) should stay set across all three, and if it drops after CONSUME the
+engine has returned to its stream-reset state.
+
+The DMA side is equally easy to isolate. Write a known pattern to
+`GBUS_DDR_BASE` over H2C and read it back with `gbus_read`: a mismatch there is a
+DDR or address-decode problem, not a DiffTest problem, and it explains an
+`GBus H2C readback mismatch` without touching the ring.
+
+## Known Limitations
+
+- **Partitioned designs only.** The cross-FPGA CDC exists for the mainline
+  partition. A single-clock build needs no CDC, and the NutShell netlist has
+  none; do not add `U_GBUS_DDR_XPART_CDC` to the host-path list there.
+- **`UVHS_PROBE_TCL` and the DDR compete for `b0.F2_FMC3` on NutShell.** You can
+  have the user DDR or UHD capture on that slot, not both.
+- **A NutShell bitstream currently resets its ring after the first CONSUME.**
+  The engine returns to its stream-reset state with `enabled`, `rd_ptr`,
+  `wr_ptr` and `available` all zero while the CPU keeps running, so the host
+  stops at `frames=0`. This is RTL, not host configuration.
+- **The config-bar and C2H register map are ABI.** Both are compiled into the
+  host and the fabric with no version negotiation beyond the `GBD1` magic and
+  the feature word. Always rebuild the pair together.
