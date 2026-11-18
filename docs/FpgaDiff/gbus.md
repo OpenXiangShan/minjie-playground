@@ -12,9 +12,9 @@ Use GBus when any of the following holds:
 - No PCIe endpoint is available on the board, or the XDMA driver cannot be
   loaded on the host machine.
 - The DiffTest stream saturates the host link. GBus carries the C2H stream as a
-  frame ring drained by AXI DMA in batches, which reaches about 32 MB/s on the
-  measured boards, against one register read per 32-bit word in the
-  register-window transport it replaces.
+  frame ring drained by AXI DMA in batches, which reaches about 46 MB/s on the
+  measured boards, against 32 MB/s for the same ring reading one batch at a
+  time and one register read per 32-bit word in the transport before that.
 - You are debugging a board where the CPU's own DRAM bus is the interesting
   observation point, since the GBus host snoops the same port the CPU uses.
 
@@ -30,6 +30,11 @@ halves must come from their branches:
 |---|---|---|
 | `env-scripts` | `fix/nutshell-gbus-20261010-avgpekx6` | GBus RTL, `partition.tcl` entries, `DIFFTEST_HOSTIF` plumbing, `gbus_clk_wiz` |
 | `difftest` | `fix/nutshell-gbus-gbd1-dma` | GBD1 streaming transport in `src/test/csrc/plugin/uvhs-gbus/` |
+
+The host half is two files, `gbus_transport.{cpp,h}` in
+`src/test/csrc/plugin/uvhs-gbus/`, and nothing outside that directory changes:
+`fpga_main.cpp` and the rest of the host are untouched, so a branch that only
+carries this transport differs from `master` by those two files.
 
 A host binary and a bitstream must be built from matching revisions. The two
 cross-check each other at runtime:
@@ -49,6 +54,22 @@ The GBus host drives the CPU's own DRAM bus, so which FPGA holds the user DDR
 decides how the path is wired. `GBUS_FPGA` and `GBUS_DMA_FPGA` must describe the
 bitstream you actually loaded.
 
+### The wrapper's DDR port
+
+`uvhs_gbus_host_wrapper` (`U_GBUS_HOST`) has three interfaces:
+
+| Port group | Direction | Purpose |
+|---|---|---|
+| `difftest_to/from_host_axis_*` | both | DiffTest records, C2H out and H2C in |
+| `difftest_cfg_axilite_*` | master | AXI-Lite into the generated SimTop config slave |
+| `ddr_*` | master | Full AXI4 into the physical DDR, 34-bit address, 256-bit data, 14-bit ID |
+
+`ddr_*` is a second DDR master, not a copy of the CPU's port: H2C writes the
+workload image into guest memory and readback verifies it, and those are bulk
+transfers. `U_GBUS_DDR_ARBITER` in `uvhs_gbus_ddr_path.svh` merges it with the
+CPU, so the port has to reach the wrapper boundary. Nothing outside that include
+file is involved, and it is only pulled in under `DIFFTEST_HOST_GBUS`.
+
 ### XiangShan, mainline partition
 
 The DDR/LLC half stays on `b0.f0` behind connector `b0.F0_FMC0` and the CPU plus
@@ -60,10 +81,14 @@ every DDR access.
 
 ### NutShell, DDR beside the CPU
 
-The DDR moves to `b0.f2` on the `b0.F2_FMC3` daughter card and no CDC exists:
-the arbiter and the bridge share an FPGA, so the merged AXI stays in
-`gbus_host_clk` end to end. `partition.tcl` names the CDC cell only when the
-mainline CPU is elaborated, so the NutShell netlist contains no such cell.
+The DDR moves to `b0.f2` on the `b0.F2_FMC3` daughter card, so the merged AXI
+stays in `gbus_host_clk` end to end and `U_GBUS_DDR_XPART_CDC` is not
+instantiated: `uvhs_gbus_ddr_path.svh` picks that wiring under `` `ifdef
+CPU_NUTSHELL `` and connects the arbiter to the DDR port directly.
+`U_GBUS_CPU_DDR_CDC` is still there — it is not a placement choice but the
+boundary between the CPU clock and `gbus_host_clk`, and it exists on every CPU.
+`partition.tcl` names the cross-FPGA CDC cell only when the mainline CPU is
+elaborated, so the NutShell netlist contains no such cell.
 
 `b0.F2_FMC3` is the slot UVHS reserves for UHD waveform capture. Binding a
 probe group there makes the backend instantiate `uvw_uhd_top` and reject the user
@@ -131,6 +156,54 @@ grep -c DIFFTEST_HOSTIF_GBUS build/host.log    # non-zero
 you will download with, since the host links against it and resolves it at
 runtime through `-rpath`.
 
+### Starting a project from scratch
+
+A GBus DiffTest project is an ordinary UVHS project with `DIFFTEST_HOSTIF=GBUS`.
+The make variables below are the whole configuration; nothing has to be edited
+into `partition.tcl` or the file list by hand.
+
+```bash
+# 1. Project: lays out env-scripts/fpga_diff/<PRJ_NAME>/ and writes rtl/filelist.f
+make project FPGA_BACKEND=uvhs CPU=<cpu> DIFFTEST_HOSTIF=GBUS \
+  NOOP_HOME=<cpu-release> DESIGN_DIR=<cpu-release>
+
+# 2. Check the defines before spending a synthesis run
+F=env-scripts/fpga_diff/<PRJ_NAME>/rtl/filelist.f
+grep -c '+define+DIFFTEST_HOST_GBUS' $F                # must be 1
+grep -c '+define+UVHS_FUNCTIONAL_DDR_REMOTE_LINK' $F   # must be 0
+grep -c '+define+CPU_NUTSHELL' $F                      # NutShell builds only
+
+# 3. Bitstream. DIFFTEST_HOSTIF is forwarded to the fpga_diff sub-make.
+make bit <cpu> FPGA_BACKEND=uvhs DIFFTEST_HOSTIF=GBUS \
+  FPGA_BUILD_REMOTE=<user@fpga-build-host>
+
+# 4. Host binary, from the difftest revision that matches the bitstream
+make fpga-host FPGA=1 RELEASE=1 CPU=<cpu> DIFFTEST_PERFCNT=1 \
+  UVHS=1 USE_XDMA_H2C=1 DIFFTEST_HOSTIF=GBUS USE_SERIAL_PORT=0 \
+  GBUS_RUNTIME_ROOT=<uvhs-install>/runtime_sw_service/export/gbus_runtime
+```
+
+Then load and check the handshake lines from *A Healthy Run* before looking at
+DiffTest: `enabled=1`, the `GBD1` id and `C2H dual stream enabled`.
+
+For a project-only run on the build host, the two `uv_shell` steps are the same
+ones `make bit` drives:
+
+```bash
+cd env-scripts/fpga_diff/<PRJ_NAME>
+bash $UV_ROOT/bin/uv_shell -bypass_vivado_version_check \
+  -s ../uvhs/compilation/frontend_run.tcl   | tee frontend_run.log
+bash $UV_ROOT/bin/uv_shell -bypass_vivado_version_check \
+  -s ../uvhs/compilation/backend_run.tcl    | tee backend_run.log
+grep -Fxq UVHS_FRONTEND_SUCCESS frontend_run.log
+grep -Fxq UVHS_BACKEND_SUCCESS  backend_run.log
+```
+
+Three settings follow from `DIFFTEST_HOSTIF=GBUS` and do not need to be set:
+`UVHS_DDR_AXI_WIDTH` becomes 256 for every CPU, `UVHS_PROBE_TCL` becomes empty
+for `CPU=nutshell` so the DDR can take `b0.F2_FMC3`, and NutShell's 64-bit CPU
+DDR port is widened by the vendor `gbus_ddr_dwc` converter.
+
 ## Runtime Configuration
 
 `run_host` reaches the board through SSH, so host-side variables have to travel
@@ -172,6 +245,19 @@ make run_host nutshell \
 Set `GBUS_FPGA`/`GBUS_DMA_FPGA` from the bitstream, not from habit. The host
 addresses H2C and C2H at their own FPGA indices because a multi-FPGA place can
 put the functional DDR and the ring on different devices.
+
+Nothing has to be enabled for the second DMA stream. The transport reads every
+batch of 64 frames or more with two DMA calls at once: it forks a child holding
+its own runtime connection and splits the batch in half, because the runtime
+serialises DMA calls inside one process. Both halves are submitted in ring order
+and released by the one CONSUME the loop already issues, so the ring protocol
+does not change. A child that cannot start, or a read that fails, is dropped and
+the batch is re-read single-stream, so the worst case is the old speed.
+
+The floor is fixed at 64 frames per half rather than exposed as a variable: below
+it the two halves cost more in round trips than the overlap saves. On NutShell,
+which produces about 19 MB/s into a drain that can already do 40, the split costs
+about 1.4%, inside the run-to-run drift between programming passes.
 
 ## Register Interface
 
@@ -245,10 +331,12 @@ after a `frame_error`.
 A working GBus session prints, in order:
 
 ```
+[gbus-helper] ready host=localhost dma_fpga=2
 [fpga-host] GBus initialized host=localhost board=0 fpga=2 config_base=0x1000 ddr_base=0x0
 [fpga-host] GBus DMA workload queued 1048576 bytes
 [fpga-host] GBus H2C readback verified bytes=1048576 chunks_failed=0 patched=0
 [fpga-host] GBD1 stream ready base=0xff40000 frames=1024 bytes=786432 min_batch=64 poll_us=100 enabled=1
+[fpga-host] C2H dual stream enabled min_batch=128 frames
 [fpga-host] GBD1 block register reads verified (13 words per call)
 [fpga-host] GBD1 first frame DMA/config mirror verified bytes=768
 ...
@@ -258,8 +346,11 @@ Core 0: HIT GOOD TRAP at pc = 0x8000003c
 [fpga-host] GBUS_TIMING c2h totals frames=... bytes=... batches=... elapsed_ms=...
 ```
 
-`enabled=1` in the `stream ready` line means the ring armed. `frames=0` in the
-`stream ended` line is the failure signature described below, not a normal end.
+`enabled=1` in the `stream ready` line means the ring armed. `C2H dual stream
+enabled` means the helper process connected and batches will be split; if that
+line is missing the run is still correct, just single-stream, and the line above
+it says why. `frames=0` in the `stream ended` line is the failure signature
+described below, not a normal end.
 
 ## Debug Playbook
 
@@ -299,11 +390,26 @@ limit, and when `dispatch_us` or `write_us` dominates the bottleneck is the host
 loop. `GBUS_H2C_CHUNK_BYTES` has no effect on C2H; raising
 `GBUS_C2H_STREAM_MIN_FRAMES` trades latency for fewer, larger DMA calls.
 
-A ring-sized batch is not automatically faster. On the XiangShan board the
-measured ceiling was 31.87 MB/s with 24.1 us per 768-byte frame, which capped
-DiffTest at about 13 MIPS because the ring moves 2.396 bytes per committed
-instruction. If the DiffTest rate is below the CPU's own `clock x IPC`, this is
-the number to attack.
+Read the engine's own rate off `dma_us`, not off `elapsed_ms`. The drain also
+pays the snapshot reads (`block_us`) and the CONSUME writes (`write_us`), so the
+end-to-end number is always lower. On the XiangShan board a run at the ceiling
+moved 6,710,582,784 bytes in 114.79 s of DMA time, **58.5 MB/s**, and reported
+46.5 MB/s end to end because 20.9 s went to snapshots and 6.5 s to CONSUME.
+
+Batch size is exhausted as a lever. Fitting `us/call = 1329 + 16.54 us/KB`
+across every board run — both CPUs, three bitstreams, four
+`GBUS_C2H_STREAM_MIN_FRAMES` settings, residuals under 33 us — gives a 1.33 ms
+fixed cost per call and a 61.9 MB/s marginal rate, which a full-ring batch hits
+at 55.98 MB/s measured. 64 and 256 both drain 512 frames per call in steady
+state, and forcing a full ring is *slower* (3.63 against 4.43 MHz) because
+nothing is dispatched until it fills. What is left is the per-call cost, which is
+what the two-stream split attacks.
+
+On XiangShan that split took 5.46 to 6.00 MHz with `CPU_CLK_IN` at 12.501 MHz and
+IPC 3.111. The ring moves 2.396 bytes per committed instruction, so 46.5 MB/s
+caps DiffTest at 19.4 MIPS, of which 18.68 was observed; reaching the core's own
+38.9 MIPS would need about 93 MB/s. If the DiffTest rate is below the CPU's own
+`clock x IPC`, this is the number to attack.
 
 ### Reading the window directly
 
@@ -346,7 +452,14 @@ DDR or address-decode problem, not a DiffTest problem, and it explains an
 - **A NutShell bitstream currently resets its ring after the first CONSUME.**
   The engine returns to its stream-reset state with `enabled`, `rd_ptr`,
   `wr_ptr` and `available` all zero while the CPU keeps running, so the host
-  stops at `frames=0`. This is RTL, not host configuration.
+  stops at `frames=0`. This is RTL, not host configuration. The 2026-11-04 build
+  of the same project drained the ring to `HIT GOOD TRAP`, so it is a regression
+  in the newer place and has to be root-caused before that bitstream can be used.
+- **The two-stream split does not help a producer-limited CPU.** It pays when the
+  drain is behind; when the CPU publishes less than the drain can take, the extra
+  round trips cost about 1.4% on NutShell. That is inside the drift between
+  programming passes, and it is why the split is decided by batch size rather
+  than disabled. There is no variable to turn it off.
 - **The config-bar and C2H register map are ABI.** Both are compiled into the
   host and the fabric with no version negotiation beyond the `GBD1` magic and
   the feature word. Always rebuild the pair together.

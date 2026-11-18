@@ -44,7 +44,7 @@ and UART environment. See [workflow.md](./workflow.md) for the full commands.
 | [workload.md](./workload.md) | Workload compilation for AM and Linux |
 | [troubleshooting.md](./troubleshooting.md) | Common issues and debugging approaches: XDMA/PCIe, host hangs, packet errors, DiffTest mismatches |
 | [xdma.md](./xdma.md) | XDMA driver build, install, load script, systemd service, troubleshooting |
-| [gbus.md](./gbus.md) | GBus host interface: when to use it, topology, build flags, register map, debug playbook |
+| [gbus.md](./gbus.md) | GBus host interface: when to use it, topology, starting a GBus project, build flags, register map, throughput, debug playbook |
 | [debug-flow.md](./debug-flow.md) | Structured debug flow for multi-step FPGA DiffTest investigations |
 
 ## Suggested Reading
