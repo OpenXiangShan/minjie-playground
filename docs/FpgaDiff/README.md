@@ -44,6 +44,7 @@ and UART environment. See [workflow.md](./workflow.md) for the full commands.
 | [workload.md](./workload.md) | Workload compilation for AM and Linux |
 | [troubleshooting.md](./troubleshooting.md) | Common issues and debugging approaches: XDMA/PCIe, host hangs, packet errors, DiffTest mismatches |
 | [xdma.md](./xdma.md) | XDMA driver build, install, load script, systemd service, troubleshooting |
+| [gbus.md](./gbus.md) | GBus host interface: when to use it, topology, starting a GBus project, build flags, register map, throughput, debug playbook |
 | [debug-flow.md](./debug-flow.md) | Structured debug flow for multi-step FPGA DiffTest investigations |
 
 ## Suggested Reading
@@ -52,6 +53,7 @@ and UART environment. See [workflow.md](./workflow.md) for the full commands.
 2. [workflow.md](./workflow.md) — Follow the end-to-end build and run flow
 3. [workload.md](./workload.md) — Customize workload generation
 4. [troubleshooting.md](./troubleshooting.md) — Diagnose common failures
-5. [debug-flow.md](./debug-flow.md) — Organize longer debugging sessions
+5. [gbus.md](./gbus.md) — Use and debug the GBus host interface
+6. [debug-flow.md](./debug-flow.md) — Organize longer debugging sessions
 
 For DiffTest internals (hardware pipeline, software checkers, config letters), see [`difftest/docs/`](../../difftest/docs/README.md).
