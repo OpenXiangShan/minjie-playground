@@ -210,7 +210,7 @@ checking. An explicit `NEMU_CONFIG` overrides these defaults.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TARGET` | `linux/hello` | Workload-builder target |
-| `WORKLOAD_DTB` | `xiangshan-fpga-AIA-mem16g.dtb` | Linux DTS selection and DTB used before Bin2ddr |
+| `WORKLOAD_DTB` | `xiangshan-fpga-AIA-mem16g.dtb`; `boom-fpga-mem2g.dtb` for BOOM | Linux DTB selected when workload-builder assembles the firmware |
 | `AM_ARCH` | inferred from `DESIGN` | AM ISA/platform selection |
 
 ### Example
